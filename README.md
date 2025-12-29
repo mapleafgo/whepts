@@ -24,13 +24,13 @@ WebRTC WHEP (WebRTC HTTP Egress Protocol) 是一种用于从 WebRTC 服务器获
 ## 安装
 
 ```bash
-npm install
+npm i whepts
 ```
 
 或
 
 ```bash
-pnpm install
+pnpm add whepts
 ```
 
 ## 使用方法
