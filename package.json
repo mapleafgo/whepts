@@ -6,7 +6,10 @@
   "description": "基于 mediamtx 的 WebRTC WHEP 播放器，支持 ZLM 和 Mediamtx 的播放地址",
   "author": "mapleafgo",
   "license": "MIT",
-  "repository": "git@github.com:mapleafgo/whepts.git",
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/mapleafgo/whepts.git"
+  },
   "keywords": [
     "webrtc",
     "whep",
