@@ -1,4 +1,4 @@
-import { WebRTCError, ErrorTypes } from './errors'
+import { ErrorTypes, WebRTCError } from '~/errors'
 
 export interface FlowCheckParams {
   interval: number

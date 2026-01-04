@@ -1,4 +1,4 @@
-import { ErrorTypes, WebRTCError } from './errors'
+import { ErrorTypes, WebRTCError } from '~/errors'
 
 /**
  * WebRTC utilities

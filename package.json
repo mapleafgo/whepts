@@ -1,11 +1,12 @@
 {
   "name": "whepts",
   "type": "module",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "packageManager": "pnpm@10.26.2",
-  "description": "",
+  "description": "基于 mediamtx 的 WebRTC WHEP 播放器，支持 ZLM 和 Mediamtx 的播放地址",
   "author": "mapleafgo",
   "license": "MIT",
+  "repository": "git@github.com:mapleafgo/whepts.git",
   "keywords": [
     "webrtc",
     "whep",

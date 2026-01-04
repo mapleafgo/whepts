@@ -1,5 +1,6 @@
-import WebRTCWhep from './webrtc-whep'
-import { Conf } from './webrtc-whep'
-import { WebRTCError, ErrorTypes } from './errors'
+import { ErrorTypes, WebRTCError } from './errors'
+import WebRTCWhep, { Conf } from './whep'
 
-export { WebRTCWhep, Conf, WebRTCError, ErrorTypes }
+export { Conf, ErrorTypes, WebRTCError }
+
+export default WebRTCWhep

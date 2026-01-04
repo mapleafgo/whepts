@@ -1,8 +1,9 @@
+import type { ParsedOffer } from './utils/sdp'
 import VisibilityObserver from '~/utils/observer'
 import { ErrorTypes, WebRTCError } from './errors'
-import { SdpUtils, ParsedOffer } from './sdp-utils'
-import { WebRtcUtils } from './webrtc-utils'
-import { FlowCheck } from './flow-check'
+import { FlowCheck } from './utils/flow-check'
+import { SdpUtils } from './utils/sdp'
+import { WebRtcUtils } from './utils/webrtc'
 
 /**
  * Configuration interface for WebRTCWhep.
@@ -46,7 +47,6 @@ export default class WebRTCWhep {
   private sessionUrl?: string
   private queuedCandidates: RTCIceCandidate[] = []
   private nonAdvertisedCodecs: string[] = []
-  private container: HTMLMediaElement
   private observer: VisibilityObserver
   private stream?: MediaStream
   private flowCheck: FlowCheck
@@ -58,13 +58,10 @@ export default class WebRTCWhep {
   constructor(conf: Conf) {
     this.conf = conf
     this.state = 'getting_codecs'
-    this.container = conf.container
     this.observer = new VisibilityObserver()
     this.flowCheck = new FlowCheck({
       interval: 5000,
-      onError: (err: WebRTCError) => {
-        this.handleError(err)
-      }
+      onError: (err: WebRTCError) => this.handleError(err),
     })
     this.getNonAdvertisedCodecs()
   }
@@ -375,7 +372,7 @@ export default class WebRTCWhep {
    */
   private onTrack(evt: RTCTrackEvent): void {
     this.stream = evt.streams[0]
-    this.observer.start(this.container, (isIntersecting) => {
+    this.observer.start(this.conf.container, (isIntersecting) => {
       if (isIntersecting)
         this.resume()
       else
@@ -387,14 +384,14 @@ export default class WebRTCWhep {
    * 流是否为空
    */
   get paused() {
-    return this.container.srcObject === null
+    return this.conf.container.srcObject === null
   }
 
   /**
    * 暂停播放
    */
   pause() {
-    this.container.srcObject = null
+    this.conf.container.srcObject = null
   }
 
   /**
@@ -402,6 +399,6 @@ export default class WebRTCWhep {
    */
   resume() {
     if (this.stream && this.paused)
-      this.container.srcObject = this.stream
+      this.conf.container.srcObject = this.stream
   }
 }
