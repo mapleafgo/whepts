@@ -35,6 +35,7 @@ export class ConnectionManager {
 
     pc.onicecandidate = (evt: RTCPeerConnectionIceEvent) => this.onLocalCandidate(evt)
     pc.onconnectionstatechange = () => this.onConnectionState()
+    pc.oniceconnectionstatechange = () => this.onIceConnectionState()
     pc.ontrack = (evt: RTCTrackEvent) => this.callbacks.onTrack(evt)
 
     return pc.createOffer().then((offer) => {
@@ -88,5 +89,15 @@ export class ConnectionManager {
 
     if (this.pc.connectionState === 'failed' || this.pc.connectionState === 'closed')
       this.callbacks.onError(new WebRTCError(ErrorTypes.OTHER_ERROR, 'peer connection closed'))
+  }
+
+  private onIceConnectionState(): void {
+    if (this.getState() !== 'running' || !this.pc)
+      return
+
+    if (this.pc.iceConnectionState === 'failed') {
+      console.warn('ICE connection failed')
+      this.pc.restartIce()
+    }
   }
 }
