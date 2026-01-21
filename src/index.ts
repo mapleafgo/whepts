@@ -1,6 +1,7 @@
+import type { Conf, State } from './types'
 import { ErrorTypes, WebRTCError } from './errors'
-import WebRTCWhep, { Conf } from './whep'
+import WebRTCWhep from './whep'
 
-export { Conf, ErrorTypes, WebRTCError }
+export { Conf, ErrorTypes, State, WebRTCError }
 
 export default WebRTCWhep
