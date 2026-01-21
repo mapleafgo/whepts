@@ -95,6 +95,8 @@ export class ConnectionManager {
     if (this.getState() !== 'running' || !this.pc)
       return
 
+    console.warn(`ICE connection state: ${this.pc.iceConnectionState}`)
+
     if (this.pc.iceConnectionState === 'failed') {
       console.warn('ICE connection failed')
       this.pc.restartIce()

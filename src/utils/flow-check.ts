@@ -63,7 +63,7 @@ export class FlowCheck {
 
     // 断流判定：连接正常但字节数无变化
     if (currentBytes === this.lastBytesReceived && this.pc.connectionState === 'connected') {
-      this.onError(new WebRTCError(ErrorTypes.NETWORK_ERROR, 'data stream interruption'))
+      this.onError(new WebRTCError(ErrorTypes.CONNECT_ERROR, 'data stream interruption'))
       return
     }
 

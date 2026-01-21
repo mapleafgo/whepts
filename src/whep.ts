@@ -82,7 +82,7 @@ export default class WebRTCWhep {
     if (this.state === 'getting_codecs') {
       this.state = 'failed'
     }
-    else if (err instanceof WebRTCError && err.type === ErrorTypes.SIGNAL_ERROR) {
+    else if (err instanceof WebRTCError && [ErrorTypes.SIGNAL_ERROR, ErrorTypes.NOT_FOUND_ERROR, ErrorTypes.REQUEST_ERROR].includes(err.type)) {
       this.state = 'failed'
     }
     else if (this.state === 'running') {

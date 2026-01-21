@@ -50,15 +50,14 @@ export class HttpClient {
         case 201:
           break
         case 404:
-          throw new WebRTCError(ErrorTypes.NETWORK_ERROR, 'stream not found')
         case 406:
-          throw new WebRTCError(ErrorTypes.NETWORK_ERROR, 'stream not supported')
+          throw new WebRTCError(ErrorTypes.NOT_FOUND_ERROR, 'stream not found')
         case 400:
           return res.json().then((e: { error: string }) => {
-            throw new WebRTCError(ErrorTypes.NETWORK_ERROR, e.error)
+            throw new WebRTCError(ErrorTypes.REQUEST_ERROR, e.error)
           })
         default:
-          throw new WebRTCError(ErrorTypes.NETWORK_ERROR, `bad status code ${res.status}`)
+          throw new WebRTCError(ErrorTypes.REQUEST_ERROR, `bad status code ${res.status}`)
       }
 
       const location = res.headers.get('Location')
@@ -83,9 +82,9 @@ export class HttpClient {
           case 204:
             break
           case 404:
-            throw new WebRTCError(ErrorTypes.NETWORK_ERROR, 'stream not found')
+            throw new WebRTCError(ErrorTypes.NOT_FOUND_ERROR, 'stream not found')
           default:
-            throw new WebRTCError(ErrorTypes.NETWORK_ERROR, `bad status code ${res.status}`)
+            throw new WebRTCError(ErrorTypes.REQUEST_ERROR, `bad status code ${res.status}`)
         }
       })
       .catch(err => this.onError(err))
