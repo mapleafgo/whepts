@@ -34,11 +34,11 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
       emitter: this,
     })
 
-    this.httpClient = new HttpClient(
-      this.conf,
-      () => this.state,
-      err => this.handleError(err),
-    )
+    this.httpClient = new HttpClient({
+      conf: this.conf,
+      getState: () => this.state,
+      emitter: this,
+    })
 
     this.connectionManager = new ConnectionManager(
       () => this.state,
