@@ -17,6 +17,7 @@ WebRTC WHEP (WebRTC HTTP Egress Protocol) 是一种用于从 WebRTC 服务器获
 - 支持事件监听和错误处理
 - 可配置的连接参数
 - 自动断流检测与重连
+- 支持动态更新播放地址（用于故障切换）
 - 支持多种音视频编解码器
 - 支持仅可视区域播放控制
 - 在 Chrome 上根据硬件支持 G711 和 H265 编解码器
@@ -125,6 +126,34 @@ player.resume()
 player.close()
 ```
 
+### 更新播放地址
+
+当播放失败时，可以使用 `updateUrl()` 方法切换到新的播放地址：
+
+```typescript
+import WebRTCWhep from 'whepts'
+
+const player = new WebRTCWhep({
+  url: 'https://your-server:port/stream.whep',
+  container: document.getElementById('video') as HTMLMediaElement,
+})
+
+// 监听错误事件
+player.on('error', async (error) => {
+  console.error('播放错误:', error.message)
+
+  // 从服务器获取新的播放地址
+  const newUrl = await fetchNewStreamUrl()
+
+  // 使用新地址重新开始播放
+  player.updateUrl(newUrl)
+})
+
+// 或者手动更新地址
+const newStreamUrl = 'https://another-server:port/stream.whep'
+player.updateUrl(newStreamUrl)
+```
+
 ## 支持的播放地址格式
 
 ### ZLMediaKit
@@ -210,6 +239,7 @@ player.on('restart', () => {
 - `close()`: 关闭播放器和所有资源
 - `pause()`: 暂停播放
 - `resume()`: 恢复播放
+- `updateUrl(url)`: 更新播放地址并重新开始播放（用于播放失败时切换到新的 URL）
 - `on(event, listener)`: 注册事件监听器
 
 #### 错误类型

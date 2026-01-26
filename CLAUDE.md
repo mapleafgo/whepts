@@ -62,7 +62,7 @@ WebRTCWhep uses nanostores for reactive state management:
   - `getting_codecs` - Initial state during codec detection
   - `running` - Normal operation
   - `restarting` - Recovering from errors, will retry after 2s
-  - `closed` - Explicitly closed
+  - `closed` - Explicitly closed (via `close()` method)
   - `failed` - Permanent failure (signal errors, 404/406, bad requests)
 
 ### Event System
@@ -85,6 +85,26 @@ All errors go through `WebRTCWhep.handleError()` and are emitted via the `error`
 - Signal/NotFound/Request errors → `failed` state
 - Errors while `running` → cleanup session, `restarting` state, retry after 2s
 - All errors emitted via `error` event for users to handle
+
+### Public API Methods
+
+- **`close()`** - Terminates the connection and releases all resources. Sets state to `closed` (final state)
+- **`pause()`** / **`resume()`** - Pauses/resumes media playback without closing connection
+- **`updateUrl(url: string)`** - Updates the WHEP endpoint URL and restarts playback:
+  - Clears any pending restart timeouts
+  - Cleans up the existing session (DELETE request to server)
+  - Resets state to `running` and starts connection with new URL
+  - Emits error if called when state is `closed`
+  - Useful for fallback/failover scenarios when current URL fails
+
+### Private Helper Methods
+
+- **`cleanupSession()`** - Centralized session cleanup logic (reused by `handleError()` and `updateUrl()`):
+  - Closes the RTCPeerConnection
+  - Closes flow monitoring
+  - Clears queued ICE candidates
+  - Sends DELETE request to server to terminate session
+  - Clears the stored session URL
 
 ### Dependencies
 

@@ -70,6 +70,18 @@
 - Use union literal types for state (e.g., `'getting_codecs' | 'running' | 'restarting' | 'closed' | 'failed'`)
 - Always check state before operations that depend on it
 - Use getters for derived properties (e.g., `get isRunning()`)
+- `closed` is a final state - once entered, no further operations (except cleanup) are allowed
+- Always create private helper methods to reuse common cleanup logic (e.g., `cleanupSession()`)
+
+### Public API Design
+
+- Public methods should have JSDoc comments with usage examples
+- When adding new public methods, consider:
+  - State validation (reject operations in terminal states like `closed`)
+  - Resource cleanup (reuse existing cleanup helpers)
+  - State transitions (ensure proper state changes)
+  - Event emission (keep users informed)
+- Example: `updateUrl()` validates `closed` state, reuses `cleanupSession()`, and restarts playback
 
 ### WebRTC Specifics
 

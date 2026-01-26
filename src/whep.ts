@@ -93,6 +93,19 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
     this.emit('close')
   }
 
+  private cleanupSession(): void {
+    this.connectionManager.close()
+    this.flowCheck.close()
+    this.queuedCandidates = []
+
+    if (this.sessionUrl) {
+      fetch(this.sessionUrl, {
+        method: 'DELETE',
+      }).catch(() => {}) // Ignore deletion errors
+      this.sessionUrl = undefined
+    }
+  }
+
   private handleError(err: Error | WebRTCError): void {
     this.flowCheck.close()
 
@@ -103,15 +116,7 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
       this.stateStore.set('failed')
     }
     else if (this.stateStore.get() === 'running') {
-      this.connectionManager.close()
-      this.queuedCandidates = []
-
-      if (this.sessionUrl) {
-        fetch(this.sessionUrl, {
-          method: 'DELETE',
-        })
-        this.sessionUrl = undefined
-      }
+      this.cleanupSession()
 
       this.stateStore.set('restarting')
       this.emit('restart')
@@ -194,5 +199,46 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
 
   resume(): void {
     this.trackManager.resume()
+  }
+
+  /**
+   * Update the WHEP endpoint URL and restart playback.
+   * Useful when the current URL fails and you need to switch to a new URL.
+   *
+   * @param url - The new WHEP endpoint URL
+   *
+   * @example
+   * ```ts
+   * player.on('error', () => {
+   *   // Get new URL from your server
+   *   const newUrl = await getNewStreamUrl()
+   *   player.updateUrl(newUrl)
+   * })
+   * ```
+   */
+  updateUrl(url: string): void {
+    const currentState = this.stateStore.get()
+
+    // Cannot update URL if already closed
+    if (currentState === 'closed') {
+      this.emit('error', new WebRTCError(ErrorTypes.OTHER_ERROR, 'Cannot update URL: instance is closed'))
+      return
+    }
+
+    // Update the URL
+    this.conf.url = url
+
+    // Clear restart timeout if exists
+    if (this.restartTimeout) {
+      clearTimeout(this.restartTimeout)
+      this.restartTimeout = undefined
+    }
+
+    // Cleanup existing session
+    this.cleanupSession()
+
+    // Reset to running state and start with new URL
+    this.stateStore.set('running')
+    this.start()
   }
 }
