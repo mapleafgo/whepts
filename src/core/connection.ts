@@ -1,26 +1,23 @@
+import type EventEmitter from 'eventemitter3'
 import type { ParsedOffer } from '../utils/sdp'
 import type { State } from '~/types'
 import { ErrorTypes, WebRTCError } from '~/errors'
 import { SdpUtils } from '../utils/sdp'
 
-export interface ConnectionManagerCallbacks {
-  onCandidate: (candidate: RTCIceCandidate) => void
-  onTrack: (evt: RTCTrackEvent) => void
-  onError: (err: WebRTCError) => void
+export interface ConnectionManagerOptions {
+  getState: () => State
+  emitter: EventEmitter
+  getNonAdvertisedCodecs: () => string[]
 }
 
 export class ConnectionManager {
   private pc?: RTCPeerConnection
   private offerData?: ParsedOffer
 
-  constructor(
-    private getState: () => State,
-    private callbacks: ConnectionManagerCallbacks,
-    private getNonAdvertisedCodecs: () => string[],
-  ) {}
+  constructor(private options: ConnectionManagerOptions) {}
 
   async setupPeerConnection(iceServers: RTCIceServer[]): Promise<string> {
-    if (this.getState() !== 'running')
+    if (this.options.getState() !== 'running')
       throw new WebRTCError(ErrorTypes.STATE_ERROR, 'closed')
 
     const pc = new RTCPeerConnection({
@@ -36,13 +33,13 @@ export class ConnectionManager {
     pc.onicecandidate = (evt: RTCPeerConnectionIceEvent) => this.onLocalCandidate(evt)
     pc.onconnectionstatechange = () => this.onConnectionState()
     pc.oniceconnectionstatechange = () => this.onIceConnectionState()
-    pc.ontrack = (evt: RTCTrackEvent) => this.callbacks.onTrack(evt)
+    pc.ontrack = (evt: RTCTrackEvent) => this.options.emitter.emit('track', evt)
 
     return pc.createOffer().then((offer) => {
       if (!offer.sdp)
         throw new WebRTCError(ErrorTypes.SIGNAL_ERROR, 'Failed to create offer SDP')
 
-      offer.sdp = SdpUtils.editOffer(offer.sdp, this.getNonAdvertisedCodecs())
+      offer.sdp = SdpUtils.editOffer(offer.sdp, this.options.getNonAdvertisedCodecs())
       this.offerData = SdpUtils.parseOffer(offer.sdp)
 
       return pc.setLocalDescription(offer).then(() => offer.sdp!)
@@ -50,7 +47,7 @@ export class ConnectionManager {
   }
 
   async setAnswer(answer: string): Promise<void> {
-    if (this.getState() !== 'running')
+    if (this.options.getState() !== 'running')
       throw new WebRTCError(ErrorTypes.STATE_ERROR, 'closed')
 
     return this.pc!.setRemoteDescription(
@@ -76,23 +73,23 @@ export class ConnectionManager {
   }
 
   private onLocalCandidate(evt: RTCPeerConnectionIceEvent): void {
-    if (this.getState() !== 'running')
+    if (this.options.getState() !== 'running')
       return
 
     if (evt.candidate)
-      this.callbacks.onCandidate(evt.candidate)
+      this.options.emitter.emit('candidate', evt.candidate)
   }
 
   private onConnectionState(): void {
-    if (this.getState() !== 'running' || !this.pc)
+    if (this.options.getState() !== 'running' || !this.pc)
       return
 
     if (this.pc.connectionState === 'failed' || this.pc.connectionState === 'closed')
-      this.callbacks.onError(new WebRTCError(ErrorTypes.OTHER_ERROR, 'peer connection closed'))
+      this.options.emitter.emit('error', new WebRTCError(ErrorTypes.OTHER_ERROR, 'peer connection closed'))
   }
 
   private onIceConnectionState(): void {
-    if (this.getState() !== 'running' || !this.pc)
+    if (this.options.getState() !== 'running' || !this.pc)
       return
 
     console.warn(`ICE connection state: ${this.pc.iceConnectionState}`)

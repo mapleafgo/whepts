@@ -1,17 +1,15 @@
+import type EventEmitter from 'eventemitter3'
 import type { State } from '~/types'
 import { ErrorTypes, WebRTCError } from '~/errors'
 import { WebRtcUtils } from '../utils/webrtc'
 
-export interface CodecDetectorCallbacks {
-  onCodecsDetected: (codecs: string[]) => void
-  onError: (err: Error) => void
+export interface CodecDetectorOptions {
+  getState: () => State
+  emitter: EventEmitter
 }
 
 export class CodecDetector {
-  constructor(
-    private getState: () => State,
-    private callbacks: CodecDetectorCallbacks,
-  ) {}
+  constructor(private options: CodecDetectorOptions) {}
 
   detect(): void {
     Promise.all(
@@ -23,11 +21,11 @@ export class CodecDetector {
     )
       .then(c => c.filter(e => e !== false))
       .then((codecs) => {
-        if (this.getState() !== 'getting_codecs')
+        if (this.options.getState() !== 'getting_codecs')
           throw new WebRTCError(ErrorTypes.STATE_ERROR, 'closed')
 
-        this.callbacks.onCodecsDetected(codecs as string[])
+        this.options.emitter.emit('codecs:detected', codecs as string[])
       })
-      .catch(err => this.callbacks.onError(err))
+      .catch(err => this.options.emitter.emit('error', err))
   }
 }

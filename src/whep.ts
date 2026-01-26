@@ -1,4 +1,6 @@
-import type { Conf, State } from './types'
+import type { Conf, State, WhepEvents } from './types'
+import EventEmitter from 'eventemitter3'
+import { atom } from 'nanostores'
 import { CodecDetector } from './core/codec'
 import { ConnectionManager } from './core/connection'
 import { HttpClient } from './core/http'
@@ -6,11 +8,13 @@ import { TrackManager } from './core/track'
 import { ErrorTypes, WebRTCError } from './errors'
 import { FlowCheck } from './utils/flow-check'
 
+export { type WhepEvents }
+
 /** WebRTC/WHEP reader. */
-export default class WebRTCWhep {
+export default class WebRTCWhep extends EventEmitter<WhepEvents> {
   private retryPause: number = 2000
   private conf: Conf
-  private state: State
+  private stateStore = atom<State>('getting_codecs')
   private restartTimeout?: ReturnType<typeof setTimeout>
   private sessionUrl?: string
   private queuedCandidates: RTCIceCandidate[] = []
@@ -22,44 +26,56 @@ export default class WebRTCWhep {
   private codecDetector: CodecDetector
 
   constructor(conf: Conf) {
+    super()
     this.conf = conf
-    this.state = 'getting_codecs'
 
-    this.flowCheck = new FlowCheck({
-      interval: 5000,
-      onError: (err: WebRTCError) => this.handleError(err),
+    // Listen to state changes and emit events
+    this.stateStore.subscribe((current, previous) => {
+      console.warn(`State: ${previous} → ${current}`)
+      this.emit('state:change', { from: previous as State, to: current })
     })
-
-    this.httpClient = new HttpClient(
-      this.conf,
-      () => this.state,
-      err => this.handleError(err),
-    )
-
-    this.connectionManager = new ConnectionManager(
-      () => this.state,
-      {
-        onCandidate: candidate => this.handleCandidate(candidate),
-        onTrack: (evt) => {
-          this.trackManager.onTrack(evt)
-          this.flowCheck.start()
-        },
-        onError: err => this.handleError(err),
-      },
-      () => this.nonAdvertisedCodecs,
-    )
 
     this.trackManager = new TrackManager(this.conf.container)
 
-    this.codecDetector = new CodecDetector(
-      () => this.state,
-      {
-        onCodecsDetected: codecs => this.handleCodecsDetected(codecs),
-        onError: err => this.handleError(err),
-      },
-    )
+    this.flowCheck = new FlowCheck({
+      interval: 5000,
+      emitter: this,
+    })
+
+    this.httpClient = new HttpClient({
+      conf: this.conf,
+      getState: () => this.stateStore.get(),
+      emitter: this,
+    })
+
+    this.connectionManager = new ConnectionManager({
+      getState: () => this.stateStore.get(),
+      emitter: this,
+      getNonAdvertisedCodecs: () => this.nonAdvertisedCodecs,
+    })
+
+    this.codecDetector = new CodecDetector({
+      getState: () => this.stateStore.get(),
+      emitter: this,
+    })
+
+    // Listen to codec detection events
+    this.on('codecs:detected', (codecs: string[]) => {
+      this.handleCodecsDetected(codecs)
+    })
+
+    // Listen to connection events
+    this.on('candidate', (candidate: RTCIceCandidate) => this.handleCandidate(candidate))
+    this.on('track', (evt: RTCTrackEvent) => {
+      this.trackManager.onTrack(evt)
+      this.flowCheck.start()
+    })
 
     this.codecDetector.detect()
+  }
+
+  get state(): State {
+    return this.stateStore.get()
   }
 
   get isRunning(): boolean {
@@ -67,25 +83,26 @@ export default class WebRTCWhep {
   }
 
   close(): void {
-    this.state = 'closed'
+    this.stateStore.set('closed')
     this.connectionManager.close()
     this.trackManager.stop()
     this.flowCheck.close()
     if (this.restartTimeout) {
       clearTimeout(this.restartTimeout)
     }
+    this.emit('close')
   }
 
   private handleError(err: Error | WebRTCError): void {
     this.flowCheck.close()
 
-    if (this.state === 'getting_codecs') {
-      this.state = 'failed'
+    if (this.stateStore.get() === 'getting_codecs') {
+      this.stateStore.set('failed')
     }
     else if (err instanceof WebRTCError && [ErrorTypes.SIGNAL_ERROR, ErrorTypes.NOT_FOUND_ERROR, ErrorTypes.REQUEST_ERROR].includes(err.type)) {
-      this.state = 'failed'
+      this.stateStore.set('failed')
     }
-    else if (this.state === 'running') {
+    else if (this.stateStore.get() === 'running') {
       this.connectionManager.close()
       this.queuedCandidates = []
 
@@ -96,30 +113,30 @@ export default class WebRTCWhep {
         this.sessionUrl = undefined
       }
 
-      this.state = 'restarting'
+      this.stateStore.set('restarting')
+      this.emit('restart')
 
       this.restartTimeout = setTimeout(() => {
         this.restartTimeout = undefined
-        this.state = 'running'
+        this.stateStore.set('running')
         this.start()
       }, this.retryPause)
 
       err.message = `${err.message}, retrying in some seconds`
     }
 
-    if (this.conf.onError) {
-      if (err instanceof WebRTCError) {
-        this.conf.onError(err)
-      }
-      else {
-        this.conf.onError(new WebRTCError(ErrorTypes.OTHER_ERROR, err.message))
-      }
+    // Emit to users
+    if (err instanceof WebRTCError) {
+      this.emit('error', err)
+    }
+    else {
+      this.emit('error', new WebRTCError(ErrorTypes.OTHER_ERROR, err.message))
     }
   }
 
   private handleCodecsDetected(codecs: string[]): void {
     this.nonAdvertisedCodecs = codecs
-    this.state = 'running'
+    this.stateStore.set('running')
     this.start()
   }
 
@@ -142,7 +159,7 @@ export default class WebRTCWhep {
       this.sessionUrl = sessionUrl
 
     return this.connectionManager.setAnswer(answer).then(() => {
-      if (this.state !== 'running')
+      if (this.stateStore.get() !== 'running')
         return
 
       if (this.queuedCandidates.length !== 0) {

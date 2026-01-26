@@ -44,13 +44,23 @@ import WebRTCWhep from 'whepts'
 const config = {
   url: 'https://your-server:port/index/api/whep?app={app}&stream={stream}', // WHEP 服务器地址
   container: document.getElementById('video') as HTMLMediaElement, // 视频播放容器
-  onError: (error) => {
-    console.error('播放错误:', error)
-  }
 }
 
 // 创建播放器实例
 const player = new WebRTCWhep(config)
+
+// 监听事件
+player.on('state:change', ({ from, to }) => {
+  console.log(`状态变化: ${from} → ${to}`)
+})
+
+player.on('error', (error) => {
+  console.error('播放错误:', error.message, error.type)
+})
+
+player.on('track', (evt) => {
+  console.log('接收到媒体轨道:', evt.track.kind)
+})
 
 // 播放器会自动开始播放
 ```
@@ -71,14 +81,36 @@ const config = {
     {
       urls: ['stun:stun.l.google.com:19302']
     }
-  ],
-  onError: (error) => {
-    console.error('播放错误:', error)
-  }
+  ]
 }
 
 // 创建播放器实例
 const player = new WebRTCWhep(config)
+
+// 监听所有事件
+player.on('state:change', ({ from, to }) => {
+  console.log(`状态: ${from} → ${to}`)
+})
+
+player.on('candidate', (candidate) => {
+  console.log('ICE 候选:', candidate.candidate)
+})
+
+player.on('track', (evt) => {
+  console.log('媒体轨道:', evt.track.kind)
+})
+
+player.on('error', (error) => {
+  console.error('错误:', error.message, error.type)
+})
+
+player.on('close', () => {
+  console.log('连接已关闭')
+})
+
+player.on('restart', () => {
+  console.log('正在重连...')
+})
 
 // 检查流状态
 console.log('流状态:', player.isRunning)
@@ -90,7 +122,7 @@ player.pause()
 player.resume()
 
 // 关闭播放器
-// player.close();
+player.close()
 ```
 
 ## 支持的播放地址格式
@@ -124,10 +156,52 @@ WebRTCWhep(conf)
   - `pass`: 认证密码（可选）
   - `token`: 认证令牌（可选）
   - `iceServers`: ICE 服务器配置（可选）
-  - `onError`: 错误回调函数（可选）
+
+#### 事件
+
+```typescript
+// 状态变化事件
+player.on('state:change', ({ from, to }) => {
+  console.log(`状态: ${from} → ${to}`)
+})
+
+// ICE 候选事件
+player.on('candidate', (candidate) => {
+  console.log('ICE 候选:', candidate.candidate)
+})
+
+// 媒体轨道事件
+player.on('track', (evt) => {
+  console.log('媒体轨道:', evt.track.kind)
+})
+
+// 错误事件
+player.on('error', (error) => {
+  console.error('错误:', error.message, error.type)
+})
+
+// 连接关闭事件
+player.on('close', () => {
+  console.log('连接已关闭')
+})
+
+// 重连事件
+player.on('restart', () => {
+  console.log('正在重连...')
+})
+```
+
+**事件类型：**
+- `state:change`: 状态变化，包含 `from` 和 `to` 状态
+- `candidate`: ICE 候选
+- `track`: 媒体轨道
+- `error`: 错误
+- `close`: 连接关闭
+- `restart`: 开始重连
 
 #### 属性
 
+- `state`: 当前状态 (`getting_codecs` | `running` | `restarting` | `closed` | `failed`)
 - `isRunning`: 流是否正在运行
 - `paused`: 播放器是否已暂停
 
@@ -136,6 +210,7 @@ WebRTCWhep(conf)
 - `close()`: 关闭播放器和所有资源
 - `pause()`: 暂停播放
 - `resume()`: 恢复播放
+- `on(event, listener)`: 注册事件监听器
 
 #### 错误类型
 
@@ -170,6 +245,8 @@ src/
 
 - TypeScript
 - WebRTC API
+- eventemitter3 - 事件发射器
+- nanostores - 状态管理
 - 相关构建工具 (Rollup, ESLint)
 
 ## 许可证

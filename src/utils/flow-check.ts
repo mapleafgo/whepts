@@ -1,11 +1,12 @@
+import type EventEmitter from 'eventemitter3'
 import { ErrorTypes, WebRTCError } from '~/errors'
 
-export interface FlowCheckParams {
+export interface FlowCheckOptions {
   interval: number
   stableInterval?: number
   maxNoProgress?: number
   stabilizationTime?: number
-  onError: (err: WebRTCError) => void
+  emitter: EventEmitter
 }
 
 /**
@@ -25,19 +26,17 @@ export class FlowCheck {
   private lastBytesReceived: number = 0
   private checkTimer?: ReturnType<typeof setTimeout>
   private pc?: RTCPeerConnection
-  private onError: (err: WebRTCError) => void
 
   // 状态跟踪
   private consecutiveNoProgress: number = 0
   private startTime: number = 0
   private isStable: boolean = false
 
-  constructor(params: FlowCheckParams) {
-    this.baseInterval = params.interval
-    this.stableInterval = params.stableInterval || (params.interval * 2)
-    this.maxNoProgress = params.maxNoProgress || 3
-    this.stabilizationTime = params.stabilizationTime || 30000 // 30秒
-    this.onError = params.onError
+  constructor(private options: FlowCheckOptions) {
+    this.baseInterval = options.interval
+    this.stableInterval = options.stableInterval || (options.interval * 2)
+    this.maxNoProgress = options.maxNoProgress || 3
+    this.stabilizationTime = options.stabilizationTime || 30000 // 30秒
   }
 
   setPeerConnection(pc: RTCPeerConnection | undefined): void {
@@ -118,7 +117,7 @@ export class FlowCheck {
     if (currentBytes === this.lastBytesReceived) {
       this.consecutiveNoProgress++
       if (this.consecutiveNoProgress >= this.maxNoProgress) {
-        this.onError(new WebRTCError(ErrorTypes.CONNECT_ERROR, 'data stream interruption'))
+        this.options.emitter.emit('error', new WebRTCError(ErrorTypes.CONNECT_ERROR, 'data stream interruption'))
         this.consecutiveNoProgress = 0
         return
       }
