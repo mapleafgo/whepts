@@ -16,7 +16,7 @@ export class ConnectionManager {
   constructor(
     private getState: () => State,
     private callbacks: ConnectionManagerCallbacks,
-    private nonAdvertisedCodecs: string[] = [],
+    private getNonAdvertisedCodecs: () => string[],
   ) {}
 
   async setupPeerConnection(iceServers: RTCIceServer[]): Promise<string> {
@@ -42,7 +42,7 @@ export class ConnectionManager {
       if (!offer.sdp)
         throw new WebRTCError(ErrorTypes.SIGNAL_ERROR, 'Failed to create offer SDP')
 
-      offer.sdp = SdpUtils.editOffer(offer.sdp, this.nonAdvertisedCodecs)
+      offer.sdp = SdpUtils.editOffer(offer.sdp, this.getNonAdvertisedCodecs())
       this.offerData = SdpUtils.parseOffer(offer.sdp)
 
       return pc.setLocalDescription(offer).then(() => offer.sdp!)

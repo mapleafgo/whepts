@@ -9,10 +9,12 @@ Whepts is a WebRTC WHEP (WebRTC-HTTP Egress Protocol) player library that suppor
 ## Common Commands
 
 ### Build
+
 - `pnpm build` - Production build with minification
 - `pnpm build:debug` - Debug build with source maps
 
 ### Linting
+
 - `pnpm lint` - Run ESLint
 - `pnpm lint:fix` - Run ESLint with auto-fix
 
@@ -21,6 +23,7 @@ Whepts is a WebRTC WHEP (WebRTC-HTTP Egress Protocol) player library that suppor
 The library follows a modular architecture with clear separation of concerns:
 
 ### Entry Point
+
 - `src/index.ts` - Exports the main `WebRTCWhep` class and public types
 
 ### Core Components (`src/core/`)
@@ -39,11 +42,12 @@ The library follows a modular architecture with clear separation of concerns:
 
 - **`webrtc.ts`** (`WebRtcUtils`) - WebRTC utilities: codec support detection, parsing Link headers to ICE servers
 
-- **`flow-check.ts`** (`FlowCheck`) - Monitors stream health by checking if bytes received are stagnating while connection is "connected" (default interval: 5s)
+- **`flow-check.ts`** (`FlowCheck`) - Monitors stream health by checking if bytes received are stagnating while connection is "connected". Uses adaptive polling: high-frequency checks (default: 5s) during initial stabilization period (default: 30s), then switches to lower frequency (default: 10s) to reduce overhead. Requires consecutive no-progress periods (default: 3) before triggering error to avoid false positives. Automatically cleans up resources when closed.
 
 ### State Machine
 
 States in `src/types.ts`:
+
 - `getting_codecs` - Initial state during codec detection
 - `running` - Normal operation
 - `restarting` - Recovering from errors, will retry after 2s
@@ -53,6 +57,7 @@ States in `src/types.ts`:
 ### Error Handling
 
 All errors go through `WebRTCWhep.handleError()`:
+
 - Signal/NotFound/Request errors → `failed` state
 - Errors while `running` → cleanup session, `restarting` state, retry after 2s
 - All errors reported via `conf.onError` callback if provided

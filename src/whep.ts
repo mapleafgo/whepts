@@ -11,7 +11,7 @@ export default class WebRTCWhep {
   private retryPause: number = 2000
   private conf: Conf
   private state: State
-  private restartTimeout?: NodeJS.Timeout
+  private restartTimeout?: ReturnType<typeof setTimeout>
   private sessionUrl?: string
   private queuedCandidates: RTCIceCandidate[] = []
   private nonAdvertisedCodecs: string[] = []
@@ -46,7 +46,7 @@ export default class WebRTCWhep {
         },
         onError: err => this.handleError(err),
       },
-      this.nonAdvertisedCodecs,
+      () => this.nonAdvertisedCodecs,
     )
 
     this.trackManager = new TrackManager(this.conf.container)
@@ -70,14 +70,14 @@ export default class WebRTCWhep {
     this.state = 'closed'
     this.connectionManager.close()
     this.trackManager.stop()
-    this.flowCheck.stop()
+    this.flowCheck.close()
     if (this.restartTimeout) {
       clearTimeout(this.restartTimeout)
     }
   }
 
   private handleError(err: Error | WebRTCError): void {
-    this.flowCheck.stop()
+    this.flowCheck.close()
 
     if (this.state === 'getting_codecs') {
       this.state = 'failed'
@@ -126,6 +126,12 @@ export default class WebRTCWhep {
   private start(): void {
     this.httpClient.requestICEServers()
       .then(iceServers => this.connectionManager.setupPeerConnection(iceServers))
+      .then((offer) => {
+        const pc = this.connectionManager.getPeerConnection()
+        if (pc)
+          this.flowCheck.setPeerConnection(pc)
+        return offer
+      })
       .then(offer => this.httpClient.sendOffer(offer))
       .then(({ sessionUrl, answer }) => this.handleOfferResponse(sessionUrl, answer))
       .catch(err => this.handleError(err))
