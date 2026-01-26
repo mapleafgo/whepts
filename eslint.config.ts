@@ -6,7 +6,7 @@ export default antfu(
     formatters: true,
     pnpm: true,
     ignores: [
-      '*.md',
+      '**/*.md',
     ],
     rules: {
       'n/prefer-global/process': ['error', 'always'],
