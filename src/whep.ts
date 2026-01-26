@@ -40,18 +40,11 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
       emitter: this,
     })
 
-    this.connectionManager = new ConnectionManager(
-      () => this.state,
-      {
-        onCandidate: candidate => this.handleCandidate(candidate),
-        onTrack: (evt) => {
-          this.trackManager.onTrack(evt)
-          this.flowCheck.start()
-        },
-        onError: err => this.handleError(err),
-      },
-      () => this.nonAdvertisedCodecs,
-    )
+    this.connectionManager = new ConnectionManager({
+      getState: () => this.state,
+      emitter: this,
+      getNonAdvertisedCodecs: () => this.nonAdvertisedCodecs,
+    })
 
     this.codecDetector = new CodecDetector({
       getState: () => this.state,
@@ -61,6 +54,13 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
     // Listen to codec detection events
     this.on('codecs:detected', (codecs: string[]) => {
       this.handleCodecsDetected(codecs)
+    })
+
+    // Listen to connection events
+    this.on('candidate', (candidate: RTCIceCandidate) => this.handleCandidate(candidate))
+    this.on('track', (evt: RTCTrackEvent) => {
+      this.trackManager.onTrack(evt)
+      this.flowCheck.start()
     })
 
     this.codecDetector.detect()
