@@ -31,7 +31,7 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
 
     this.flowCheck = new FlowCheck({
       interval: 5000,
-      onError: (err: WebRTCError) => this.handleError(err),
+      emitter: this,
     })
 
     this.httpClient = new HttpClient(
