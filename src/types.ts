@@ -23,6 +23,7 @@ export interface Conf {
  * Event types emitted by WebRTCWhep
  */
 export interface WhepEvents {
+  'codecs:detected': (codecs: string[]) => void
   'state:change': (payload: { from: State, to: State }) => void
   'candidate': (candidate: RTCIceCandidate) => void
   'track': (evt: RTCTrackEvent) => void

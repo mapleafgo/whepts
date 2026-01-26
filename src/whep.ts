@@ -1,4 +1,5 @@
-import type { Conf, State } from './types'
+import type { Conf, State, WhepEvents } from './types'
+import EventEmitter from 'eventemitter3'
 import { CodecDetector } from './core/codec'
 import { ConnectionManager } from './core/connection'
 import { HttpClient } from './core/http'
@@ -7,7 +8,7 @@ import { ErrorTypes, WebRTCError } from './errors'
 import { FlowCheck } from './utils/flow-check'
 
 /** WebRTC/WHEP reader. */
-export default class WebRTCWhep {
+export default class WebRTCWhep extends EventEmitter<WhepEvents> {
   private retryPause: number = 2000
   private conf: Conf
   private state: State
@@ -22,8 +23,11 @@ export default class WebRTCWhep {
   private codecDetector: CodecDetector
 
   constructor(conf: Conf) {
+    super()
     this.conf = conf
     this.state = 'getting_codecs'
+
+    this.trackManager = new TrackManager(this.conf.container)
 
     this.flowCheck = new FlowCheck({
       interval: 5000,
@@ -49,15 +53,15 @@ export default class WebRTCWhep {
       () => this.nonAdvertisedCodecs,
     )
 
-    this.trackManager = new TrackManager(this.conf.container)
+    this.codecDetector = new CodecDetector({
+      getState: () => this.state,
+      emitter: this,
+    })
 
-    this.codecDetector = new CodecDetector(
-      () => this.state,
-      {
-        onCodecsDetected: codecs => this.handleCodecsDetected(codecs),
-        onError: err => this.handleError(err),
-      },
-    )
+    // Listen to codec detection events
+    this.on('codecs:detected', (codecs: string[]) => {
+      this.handleCodecsDetected(codecs)
+    })
 
     this.codecDetector.detect()
   }
