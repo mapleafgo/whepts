@@ -1,3 +1,4 @@
+import EventEmitter from 'eventemitter3'
 import type { WebRTCError } from './errors'
 
 /**
@@ -16,8 +17,18 @@ export interface Conf {
   token?: string
   /** ice server list */
   iceServers?: RTCIceServer[]
-  /** Called when there's an error */
-  onError?: (err: WebRTCError) => void
+}
+
+/**
+ * Event types emitted by WebRTCWhep
+ */
+export interface WhepEvents {
+  'state:change': (payload: { from: State, to: State }) => void
+  'candidate': (candidate: RTCIceCandidate) => void
+  'track': (evt: RTCTrackEvent) => void
+  'error': (err: WebRTCError) => void
+  'close': () => void
+  'restart': () => void
 }
 
 /**
