@@ -77,11 +77,13 @@ All modules no longer accept callback functions. Instead, they receive dependenc
 ### HttpClient
 
 **Before**:
+
 ```typescript
 new HttpClient(conf, getState, onError)
 ```
 
 **After**:
+
 ```typescript
 new HttpClient({ conf, emitter })
 ```
@@ -91,6 +93,7 @@ Emits: `error`
 ### ConnectionManager
 
 **Before**:
+
 ```typescript
 new ConnectionManager(
   getState,
@@ -104,6 +107,7 @@ new ConnectionManager(
 ```
 
 **After**:
+
 ```typescript
 new ConnectionManager({ emitter, getNonAdvertisedCodecs })
 ```
@@ -113,6 +117,7 @@ Emits: `candidate`, `track`, `error`
 ### CodecDetector
 
 **Before**:
+
 ```typescript
 new CodecDetector(getState, {
   onCodecsDetected: codecs => ...,
@@ -121,6 +126,7 @@ new CodecDetector(getState, {
 ```
 
 **After**:
+
 ```typescript
 new CodecDetector({ emitter })
 ```
@@ -130,11 +136,13 @@ Emits: `codecs:detected`, `error`
 ### FlowCheck
 
 **Before**:
+
 ```typescript
 new FlowCheck({ interval, onError })
 ```
 
 **After**:
+
 ```typescript
 new FlowCheck({ interval, emitter })
 ```
@@ -150,15 +158,17 @@ No changes needed. Only passively controlled by WebRTCWhep.
 ### Breaking Change: Remove Conf.onError
 
 **Before**:
+
 ```typescript
 const whep = new WebRTCWhep({
   url: '...',
   container: video,
-  onError: (err) => console.error(err)
+  onError: err => console.error(err)
 })
 ```
 
 **After**:
+
 ```typescript
 const whep = new WebRTCWhep({
   url: '...',
@@ -226,24 +236,29 @@ WebRTCWhep (EventEmitter)
 Since backward compatibility is not required, we can refactor directly:
 
 ### Phase 1: Infrastructure
+
 - Install `eventemitter3` and `nanostores`
 - WebRTCWhep extends EventEmitter
 - Create stateStore
 - Set up event type definitions
 
 ### Phase 2: Module Migration
+
 Migrate modules in order of simplicity:
+
 1. CodecDetector (simplest, most independent)
 2. FlowCheck
 3. HttpClient
 4. ConnectionManager (most complex)
 
 ### Phase 3: Cleanup
+
 - Remove all callback interface definitions
 - Remove `Conf.onError`
 - Update TypeScript types
 
 ### Phase 4: Documentation
+
 - Update README with new usage examples
 - Document breaking changes
 - Update CLAUDE.md
