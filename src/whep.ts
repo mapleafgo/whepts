@@ -1,5 +1,6 @@
 import type { Conf, State, WhepEvents } from './types'
 import EventEmitter from 'eventemitter3'
+import { atom } from 'nanostores'
 import { CodecDetector } from './core/codec'
 import { ConnectionManager } from './core/connection'
 import { HttpClient } from './core/http'
@@ -11,7 +12,7 @@ import { FlowCheck } from './utils/flow-check'
 export default class WebRTCWhep extends EventEmitter<WhepEvents> {
   private retryPause: number = 2000
   private conf: Conf
-  private state: State
+  private stateStore = atom<State>('getting_codecs')
   private restartTimeout?: ReturnType<typeof setTimeout>
   private sessionUrl?: string
   private queuedCandidates: RTCIceCandidate[] = []
@@ -25,7 +26,12 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
   constructor(conf: Conf) {
     super()
     this.conf = conf
-    this.state = 'getting_codecs'
+
+    // Listen to state changes and emit events
+    this.stateStore.subscribe((current, previous) => {
+      console.warn(`State: ${previous} → ${current}`)
+      this.emit('state:change', { from: previous as State, to: current })
+    })
 
     this.trackManager = new TrackManager(this.conf.container)
 
@@ -36,18 +42,18 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
 
     this.httpClient = new HttpClient({
       conf: this.conf,
-      getState: () => this.state,
+      getState: () => this.stateStore.get(),
       emitter: this,
     })
 
     this.connectionManager = new ConnectionManager({
-      getState: () => this.state,
+      getState: () => this.stateStore.get(),
       emitter: this,
       getNonAdvertisedCodecs: () => this.nonAdvertisedCodecs,
     })
 
     this.codecDetector = new CodecDetector({
-      getState: () => this.state,
+      getState: () => this.stateStore.get(),
       emitter: this,
     })
 
@@ -66,12 +72,16 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
     this.codecDetector.detect()
   }
 
+  get state(): State {
+    return this.stateStore.get()
+  }
+
   get isRunning(): boolean {
     return this.state === 'running'
   }
 
   close(): void {
-    this.state = 'closed'
+    this.stateStore.set('closed')
     this.connectionManager.close()
     this.trackManager.stop()
     this.flowCheck.close()
@@ -83,13 +93,13 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
   private handleError(err: Error | WebRTCError): void {
     this.flowCheck.close()
 
-    if (this.state === 'getting_codecs') {
-      this.state = 'failed'
+    if (this.stateStore.get() === 'getting_codecs') {
+      this.stateStore.set('failed')
     }
     else if (err instanceof WebRTCError && [ErrorTypes.SIGNAL_ERROR, ErrorTypes.NOT_FOUND_ERROR, ErrorTypes.REQUEST_ERROR].includes(err.type)) {
-      this.state = 'failed'
+      this.stateStore.set('failed')
     }
-    else if (this.state === 'running') {
+    else if (this.stateStore.get() === 'running') {
       this.connectionManager.close()
       this.queuedCandidates = []
 
@@ -100,11 +110,11 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
         this.sessionUrl = undefined
       }
 
-      this.state = 'restarting'
+      this.stateStore.set('restarting')
 
       this.restartTimeout = setTimeout(() => {
         this.restartTimeout = undefined
-        this.state = 'running'
+        this.stateStore.set('running')
         this.start()
       }, this.retryPause)
 
@@ -123,7 +133,7 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
 
   private handleCodecsDetected(codecs: string[]): void {
     this.nonAdvertisedCodecs = codecs
-    this.state = 'running'
+    this.stateStore.set('running')
     this.start()
   }
 
@@ -146,7 +156,7 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
       this.sessionUrl = sessionUrl
 
     return this.connectionManager.setAnswer(answer).then(() => {
-      if (this.state !== 'running')
+      if (this.stateStore.get() !== 'running')
         return
 
       if (this.queuedCandidates.length !== 0) {
