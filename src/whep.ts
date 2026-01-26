@@ -90,6 +90,7 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
     if (this.restartTimeout) {
       clearTimeout(this.restartTimeout)
     }
+    this.emit('close')
   }
 
   private handleError(err: Error | WebRTCError): void {
@@ -113,6 +114,7 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
       }
 
       this.stateStore.set('restarting')
+      this.emit('restart')
 
       this.restartTimeout = setTimeout(() => {
         this.restartTimeout = undefined
