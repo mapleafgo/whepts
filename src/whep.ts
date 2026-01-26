@@ -121,13 +121,12 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
       err.message = `${err.message}, retrying in some seconds`
     }
 
-    if (this.conf.onError) {
-      if (err instanceof WebRTCError) {
-        this.conf.onError(err)
-      }
-      else {
-        this.conf.onError(new WebRTCError(ErrorTypes.OTHER_ERROR, err.message))
-      }
+    // Emit to users
+    if (err instanceof WebRTCError) {
+      this.emit('error', err)
+    }
+    else {
+      this.emit('error', new WebRTCError(ErrorTypes.OTHER_ERROR, err.message))
     }
   }
 
