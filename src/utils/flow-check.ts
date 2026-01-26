@@ -20,7 +20,7 @@ export class FlowCheck {
     this.onError = params.onError
   }
 
-  setPeerConnection(pc: RTCPeerConnection) {
+  setPeerConnection(pc: RTCPeerConnection): void {
     this.pc = pc
   }
 
