@@ -19,8 +19,11 @@ WebRTC WHEP (WebRTC HTTP Egress Protocol) 是一种用于从 WebRTC 服务器获
 - 自动断流检测与重连
 - 支持动态更新播放地址（用于故障切换）
 - 支持多种音视频编解码器
-- 支持仅可视区域播放控制
+- 支持非公告编解码器自动检测（G.711 A-law、多声道 Opus、线性 PCM）
+- 自适应流健康监测（初始高频检测，稳定后低频检测）
+- 支持仅可视区域播放控制（IntersectionObserver，50% 阈值）
 - 在 Chrome 上根据硬件支持 G711 和 H265 编解码器
+- 自动 ICE 候选队列管理
 
 ## 安装
 
@@ -45,6 +48,7 @@ import WebRTCWhep from 'whepts'
 const config = {
   url: 'https://your-server:port/index/api/whep?app={app}&stream={stream}', // WHEP 服务器地址
   container: document.getElementById('video') as HTMLMediaElement, // 视频播放容器
+  lazyLoad: true, // 启用懒加载（自动暂停/恢复），默认：true
 }
 
 // 创建播放器实例
@@ -82,13 +86,19 @@ const config = {
     {
       urls: ['stun:stun.l.google.com:19302']
     }
-  ]
+  ],
+  lazyLoad: true, // 启用懒加载（自动暂停/恢复），默认：true（可选）
 }
 
 // 创建播放器实例
 const player = new WebRTCWhep(config)
 
 // 监听所有事件
+player.on('codecs:detected', (codecs) => {
+  console.log('检测到的非公告编解码器:', codecs)
+  // 可能包含: 'pcma/8000/2', 'multiopus/48000/6', 'L16/48000/2'
+})
+
 player.on('state:change', ({ from, to }) => {
   console.log(`状态: ${from} → ${to}`)
 })
@@ -185,10 +195,16 @@ WebRTCWhep(conf)
   - `pass`: 认证密码（可选）
   - `token`: 认证令牌（可选）
   - `iceServers`: ICE 服务器配置（可选）
+  - `lazyLoad`: 启用懒加载（自动暂停/恢复），默认：true（可选）
 
 #### 事件
 
 ```typescript
+// 编解码器检测事件
+player.on('codecs:detected', (codecs) => {
+  console.log('检测到的非公告编解码器:', codecs)
+})
+
 // 状态变化事件
 player.on('state:change', ({ from, to }) => {
   console.log(`状态: ${from} → ${to}`)
@@ -221,6 +237,7 @@ player.on('restart', () => {
 ```
 
 **事件类型：**
+- `codecs:detected`: 检测到浏览器支持的非公告编解码器，包含编解码器列表
 - `state:change`: 状态变化，包含 `from` 和 `to` 状态
 - `candidate`: ICE 候选
 - `track`: 媒体轨道

@@ -41,7 +41,7 @@
 ### Error Handling
 
 - Use custom `WebRTCError` class for all errors (defined in `src/errors.ts`)
-- Error types: `SIGNAL_ERROR`, `STATE_ERROR`, `NETWORK_ERROR`, `MEDIA_ERROR`, `OTHER_ERROR`
+- Error types: `SIGNAL_ERROR`, `NOT_FOUND_ERROR`, `REQUEST_ERROR`, `NETWORK_ERROR`, `MEDIA_ERROR`, `OTHER_ERROR`
 - Pattern: `throw new WebRTCError(ErrorTypes.NETWORK_ERROR, 'message')`
 - Call `this.handleError(err)` for centralized error management
 
@@ -62,9 +62,12 @@
 ### File Organization
 
 - Core logic in `src/` directory
-- Utilities in `src/utils/` (e.g., `observer.ts`, `flow-check.ts`, `sdp.ts`)
+- Core modules in `src/core/` (e.g., `connection.ts`, `http.ts`, `track.ts`, `codec.ts`)
+- Utilities in `src/utils/` (e.g., `sdp.ts`, `webrtc.ts`, `flow-check.ts`)
+- Type definitions in `src/types.ts` (public API types)
 - Error types in `src/errors.ts`
-- Export main class from `src/index.ts`
+- Main class implementation in `src/whep.ts`
+- Export main class and types from `src/index.ts`
 
 ### State Management
 
@@ -77,6 +80,7 @@
 ### Public API Design
 
 - Public methods should have JSDoc comments with usage examples
+- Configuration options should have JSDoc comments in `src/types.ts`
 - When adding new public methods, consider:
   - State validation (reject operations in terminal states like `closed`)
   - Resource cleanup (reuse existing cleanup helpers)
@@ -84,12 +88,23 @@
   - Event emission (keep users informed)
 - Example: `updateUrl()` validates `closed` state, reuses `cleanupSession()`, and restarts playback
 
+**Current Configuration Options** (from `Conf` interface):
+- `url`: WHEP endpoint URL (required)
+- `container`: HTML media element (required)
+- `user`: Basic auth username (optional)
+- `pass`: Basic auth password (optional)
+- `token`: Bearer token (optional)
+- `iceServers`: Custom ICE servers (optional)
+- `lazyLoad`: Enable auto pause/resume when off-screen (optional, default: true)
+
 ### WebRTC Specifics
 
 - Always use `unified-plan` SDP semantics
 - Handle ICE candidates with queuing when session URL not ready
-- Support non-advertised codecs (PCMA, multiopus, L16)
-- Use `IntersectionObserver` for visibility-based playback control
+- Support non-advertised codecs: `pcma/8000/2` (G.711 A-law), `multiopus/48000/6` (6-channel Opus), `L16/48000/2` (Linear PCM)
+- Codec detection happens automatically at startup, emits `codecs:detected` event
+- Use `IntersectionObserver` for visibility-based playback control (threshold: 50%)
+- FlowCheck monitors `RTCInboundRtpStreamStats.bytesReceived` for stream health
 
 ## Tech Stack
 

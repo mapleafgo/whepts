@@ -35,7 +35,7 @@ export class TrackManager {
 
   onTrack(evt: RTCTrackEvent): void {
     this.stream = evt.streams[0]
-    if (this.showStore.value)
+    if (this.showStore.get())
       this.container.srcObject = this.stream
   }
 

@@ -69,15 +69,14 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
       this.flowCheck.start()
     })
 
+    // 监听异常，并尝试处理
+    this.on('error', err => this.handleError(err))
+
     this.codecDetector.detect()
   }
 
   get state(): State {
     return this.stateStore.get()
-  }
-
-  get isRunning(): boolean {
-    return this.state === 'running'
   }
 
   close(): void {
@@ -92,6 +91,11 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
   }
 
   private cleanupSession(): void {
+    if (this.restartTimeout) {
+      clearTimeout(this.restartTimeout)
+      this.restartTimeout = undefined
+    }
+
     this.connectionManager.close()
     this.flowCheck.close()
     this.queuedCandidates = []
@@ -124,16 +128,6 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
         this.stateStore.set('running')
         this.start()
       }, this.retryPause)
-
-      err.message = `${err.message}, retrying in some seconds`
-    }
-
-    // Emit to users
-    if (err instanceof WebRTCError) {
-      this.emit('error', err)
-    }
-    else {
-      this.emit('error', new WebRTCError(ErrorTypes.OTHER_ERROR, err.message))
     }
   }
 
@@ -215,22 +209,14 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
    * ```
    */
   updateUrl(url: string): void {
-    const currentState = this.stateStore.get()
-
     // Cannot update URL if already closed
-    if (currentState === 'closed') {
+    if (this.state === 'closed') {
       this.emit('error', new WebRTCError(ErrorTypes.OTHER_ERROR, 'Cannot update URL: instance is closed'))
       return
     }
 
     // Update the URL
     this.conf.url = url
-
-    // Clear restart timeout if exists
-    if (this.restartTimeout) {
-      clearTimeout(this.restartTimeout)
-      this.restartTimeout = undefined
-    }
 
     // Cleanup existing session
     this.cleanupSession()

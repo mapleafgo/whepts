@@ -30,7 +30,15 @@ The library follows an **event-driven architecture** with modular components:
 
 ### Entry Point
 
-- `src/index.ts` - Exports the main `WebRTCWhep` class and public types (including `WhepEvents`)
+- `src/index.ts` - Exports the main `WebRTCWhep` class and public types (including `WhepEvents`, `Conf`, `State`, `ErrorTypes`, `WebRTCError`)
+
+### Type Definitions
+
+- `src/types.ts` - Public type definitions:
+  - `Conf` - Configuration interface with all options
+  - `State` - State type union (5 states)
+  - `WhepEvents` - Event interface for all public events
+  - Global type extensions for `RTCConfiguration` and `RTCIceServer`
 
 ### Core Components (`src/core/`)
 
@@ -50,7 +58,9 @@ All core modules use EventEmitter for communication:
 
 - **`webrtc.ts`** (`WebRtcUtils`) - WebRTC utilities: codec support detection, parsing Link headers to ICE servers
 
-- **`flow-check.ts`** (`FlowCheck`) - Monitors stream health by checking if bytes received are stagnating while connection is "connected". Uses adaptive polling: high-frequency checks (default: 5s) during initial stabilization period (default: 30s), then switches to lower frequency (default: 10s) to reduce overhead. Requires consecutive no-progress periods (default: 3) before triggering error to avoid false positives. Automatically cleans up resources when closed. Emits: `error`
+- **`flow-check.ts`** (`FlowCheck`) - Monitors stream health by checking if bytes received are stagnating while connection is "connected". Uses adaptive polling: high-frequency checks (interval: 5000ms) during initial stabilization period (stabilizationTime: 30000ms), then switches to lower frequency (stableInterval: 10000ms) to reduce overhead. Requires consecutive no-progress periods (maxNoProgress: 3) before triggering error to avoid false positives. Automatically cleans up resources when closed. Emits: `error`
+
+  **Note**: FlowCheck configuration is currently NOT exposed in the public API. Defaults are hardcoded in `whep.ts`.
 
 ### State Management (with nanostores)
 
@@ -68,6 +78,7 @@ WebRTCWhep uses nanostores for reactive state management:
 ### Event System
 
 **Public Events** (defined in `WhepEvents` interface):
+- `codecs:detected` - Non-advertised codecs detected, payload: `string[]` (codec names like 'pcma/8000/2', 'multiopus/48000/6', 'L16/48000/2')
 - `state:change` - State transitions, payload: `{ from: State, to: State }`
 - `candidate` - ICE candidates
 - `track` - Media tracks
@@ -76,14 +87,23 @@ WebRTCWhep uses nanostores for reactive state management:
 - `restart` - Reconnection starting
 
 **Internal Events**:
-- `codecs:detected` - Codec detection complete (handled internally)
+- None (all events are public, `codecs:detected` is both public and handled internally to start connection)
 
 ### Error Handling
 
 All errors go through `WebRTCWhep.handleError()` and are emitted via the `error` event:
 
+**Error Types** (defined in `ErrorTypes`):
+- `SIGNAL_ERROR` - Signaling errors
+- `NOT_FOUND_ERROR` - Resource not found (404)
+- `REQUEST_ERROR` - Bad requests (400, 406)
+- `NETWORK_ERROR` - Network-related errors
+- `MEDIA_ERROR` - Media-related errors
+- `OTHER_ERROR` - Other errors
+
+**Error State Transitions**:
 - Signal/NotFound/Request errors → `failed` state
-- Errors while `running` → cleanup session, `restarting` state, retry after 2s
+- Network/Media/Other errors while `running` → cleanup session, `restarting` state, retry after 2s
 - All errors emitted via `error` event for users to handle
 
 ### Public API Methods
