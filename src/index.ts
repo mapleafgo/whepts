@@ -1,5 +1,4 @@
-import type { Conf, State } from './types'
-import type { WhepEvents } from './whep'
+import type { Conf, State, WhepEvents } from './types'
 import { ErrorTypes, WebRTCError } from './errors'
 import WebRTCWhep from './whep'
 

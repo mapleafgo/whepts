@@ -8,8 +8,6 @@ import { TrackManager } from './core/track'
 import { ErrorTypes, WebRTCError } from './errors'
 import { FlowCheck } from './utils/flow-check'
 
-export { type WhepEvents }
-
 /** WebRTC/WHEP reader. */
 export default class WebRTCWhep extends EventEmitter<WhepEvents> {
   private retryPause: number = 2000
