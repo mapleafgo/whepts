@@ -50,6 +50,7 @@
 - Use JSDoc for public APIs and class constructors (in English)
 - Keep implementation comments concise in Chinese as established
 - Example:
+
   ```typescript
   /**
    * Create a WebRTCWhep.

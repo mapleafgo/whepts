@@ -39,7 +39,7 @@ export class FlowCheck {
     this.stabilizationTime = options.stabilizationTime || 30000 // 30秒
   }
 
-  setPeerConnection(pc: RTCPeerConnection | undefined): void {
+  setPeerConnection(pc: RTCPeerConnection): void {
     this.pc = pc
   }
 

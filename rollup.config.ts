@@ -15,7 +15,10 @@ export default {
       sourcemap: !isProduction,
     },
   ],
-  external: [],
+  external: [
+    'eventemitter3',
+    'nanostores',
+  ],
   plugins: [
     del({ targets: 'dist' }),
     commonjs(),
