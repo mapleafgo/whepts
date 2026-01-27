@@ -19,12 +19,13 @@ export class CodecDetector {
         ['L16/48000/2'],
       ].map(c => WebRtcUtils.supportsNonAdvertisedCodec(c[0], c[1]).then(r => (r ? c[0] : false))),
     )
-      .then(c => c.filter(e => e !== false))
+      .then(c => c.filter((e): e is string => e !== false))
       .then((codecs) => {
-        if (this.options.getState() !== 'getting_codecs')
-          throw new WebRTCError(ErrorTypes.STATE_ERROR, 'closed')
+        const currentState = this.options.getState()
+        if (currentState !== 'getting_codecs')
+          throw new WebRTCError(ErrorTypes.STATE_ERROR, `State changed to ${currentState}`)
 
-        this.options.emitter.emit('codecs:detected', codecs as string[])
+        this.options.emitter.emit('codecs:detected', codecs)
       })
       .catch(err => this.options.emitter.emit('error', err))
   }
