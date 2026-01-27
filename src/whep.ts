@@ -35,7 +35,7 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
       this.emit('state:change', { from: previous as State, to: current })
     })
 
-    this.trackManager = new TrackManager(this.conf.container)
+    this.trackManager = new TrackManager(this.conf.container, this.conf.lazyLoad)
 
     this.flowCheck = new FlowCheck({
       interval: 5000,

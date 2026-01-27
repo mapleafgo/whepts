@@ -16,6 +16,8 @@ export interface Conf {
   token?: string
   /** ice server list */
   iceServers?: RTCIceServer[]
+  /** Enable lazy loading (auto pause/resume when video goes off-screen). Default: true */
+  lazyLoad?: boolean
 }
 
 /**
