@@ -59,6 +59,37 @@
   constructor(conf: Conf)
   ```
 
+### Event Message Language Convention
+
+**Critical Rule**: All event payload messages MUST be in English, code comments in Chinese
+
+- **Event payloads** (e.g., `reason`, error messages) → English only
+  - ✅ `emit('flow:stalled', { reason: 'Stream interrupted: video flow stalled' })`
+  - ❌ `emit('flow:stalled', { reason: '数据流中断：检测到视频流已停滞' })`
+
+- **Code comments** → Chinese for maintainability
+  - ✅ `// 触发断流停滞事件`
+  - ❌ `// Trigger stream stall event`
+
+**Rationale**:
+- API consistency: English messages are standard for public APIs
+- Debugging: English messages are easier to search and log internationally
+- Maintainability: Chinese comments help local team understand code quickly
+
+**Examples**:
+```typescript
+// ❌ Wrong: Chinese in event payload
+this.emitter.emit('play:stalled', {
+  reason: '播放验证失败：媒体已暂停',  // Don't do this!
+})
+
+// ✅ Correct: English in event payload, Chinese in comments
+// 播放停滞：媒体已暂停
+this.emitter.emit('play:stalled', {
+  reason: 'Playback verification failed: media is paused',
+})
+```
+
 ### File Organization
 
 - Core logic in `src/` directory

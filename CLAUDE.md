@@ -85,9 +85,16 @@ WebRTCWhep uses nanostores for reactive state management:
 - `error` - Errors
 - `close` - Connection closed
 - `restart` - Reconnection starting
+- `play:stalled` - Playback stalled, payload: `{ reason: string }`
+- `flow:stalled` - Stream flow stalled, payload: `{ reason: string }`
 
 **Internal Events**:
 - None (all events are public, `codecs:detected` is both public and handled internally to start connection)
+
+**Event Message Language Convention**:
+- Event payloads (`reason`, error messages, etc.) MUST be in English for API consistency
+- Code comments and documentation SHOULD be in Chinese for maintainability
+- Example: `emit('flow:stalled', { reason: 'Stream interrupted: video flow stalled' })` with Chinese comment `// 触发断流停滞事件`
 
 ### Error Handling
 
