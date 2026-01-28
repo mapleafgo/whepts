@@ -1,6 +1,7 @@
 import type { EventEmitter } from 'eventemitter3'
 import type { MonitorScheduler } from '~/monitors/scheduler'
 import { atom } from 'nanostores'
+import { ErrorTypes, WebRTCError } from '~/errors'
 import { FlowMonitor } from '~/monitors/flow-monitor'
 import { PlayMonitor } from '~/monitors/play-monitor'
 
@@ -13,23 +14,23 @@ export class TrackManager {
 
   constructor(
     private container: HTMLMediaElement,
-    eventEmitter: EventEmitter,
+    private eventEmitter: EventEmitter,
     private lazyLoad: boolean = true,
     scheduler: MonitorScheduler,
   ) {
     this.playMonitor = new PlayMonitor(
       {
         container,
-        emitter: eventEmitter,
+        emitter: this.eventEmitter,
       },
       scheduler,
     )
 
-    // 创建流量监控器，但不在此时启动
+    // 创建流量监控器
     this.flowMonitor = new FlowMonitor(
       {
         interval: 5000,
-        emitter: eventEmitter,
+        emitter: this.eventEmitter,
       },
       scheduler,
     )
@@ -64,6 +65,18 @@ export class TrackManager {
 
   onTrack(evt: RTCTrackEvent, pc?: RTCPeerConnection): void {
     this.stream = evt.streams[0]
+
+    // 检查流中是否包含视频轨道
+    const hasVideo = this.stream.getTracks().some(t => t.kind === 'video')
+    if (!hasVideo) {
+      const error = new WebRTCError(
+        ErrorTypes.OTHER_ERROR,
+        'No video track found in stream. Only audio streams are not supported.',
+      )
+      this.eventEmitter.emit('error', error)
+      return
+    }
+
     if (this.showStore.get()) {
       this.container.srcObject = this.stream
       this.playMonitor.play()
@@ -79,7 +92,7 @@ export class TrackManager {
   pause(): void {
     // 暂停播放监控
     this.playMonitor.stopMonitoring()
-    // 清除媒体源（停止播放）
+    // 清除媒体源（停止渲染）
     this.container.srcObject = null
   }
 
@@ -92,6 +105,15 @@ export class TrackManager {
 
   stop(): void {
     this.playMonitor.stopMonitoring()
+    this.flowMonitor.stop()
+    this.stream = undefined
+  }
+
+  /**
+   * 永久销毁（仅在 WebRTCWhep.close() 时调用）
+   */
+  destroy(): void {
+    this.playMonitor.destroy()
     this.flowMonitor.stop()
     this.stream = undefined
 
