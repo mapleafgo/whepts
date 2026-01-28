@@ -31,6 +31,7 @@ export interface WhepEvents {
   'play:success': (payload: { muted: boolean }) => void
   'play:failed': (payload: { reason: string, muted: boolean }) => void
   'play:stalled': (payload: { reason: string }) => void
+  'flow:stalled': (payload: { reason: string }) => void
   'error': (err: WebRTCError) => void
   'close': () => void
   'restart': () => void

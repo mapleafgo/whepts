@@ -62,6 +62,10 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
     this.on('candidate', (candidate: RTCIceCandidate) => this.handleCandidate(candidate))
     this.on('track', (evt: RTCTrackEvent) => this.trackManager.onTrack(evt, this.connectionManager.getPeerConnection()))
 
+    // 监听停滞事件，并尝试恢复
+    this.on('play:stalled', payload => this.handlePlayStalled(payload))
+    this.on('flow:stalled', payload => this.handleFlowStalled(payload))
+
     // 监听异常，并尝试处理
     this.on('error', err => this.handleError(err))
 
@@ -107,10 +111,47 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
     if (this.stateStore.get() === 'getting_codecs') {
       this.stateStore.set('failed')
     }
-    else if (err instanceof WebRTCError && [ErrorTypes.SIGNAL_ERROR, ErrorTypes.NOT_FOUND_ERROR, ErrorTypes.REQUEST_ERROR].includes(err.type)) {
+    else if (err instanceof WebRTCError) {
       this.stateStore.set('failed')
     }
     else if (this.stateStore.get() === 'running') {
+      this.cleanupSession()
+
+      this.stateStore.set('restarting')
+      this.emit('restart')
+
+      this.restartTimeout = setTimeout(() => {
+        this.restartTimeout = undefined
+        this.stateStore.set('running')
+        this.start()
+      }, this.retryPause)
+    }
+  }
+
+  /**
+   * 处理播放停滞事件
+   *
+   * 尝试重新播放，如果失败则触发错误
+   */
+  private handlePlayStalled(payload: { reason: string }): void {
+    console.warn('[PlayStalled]', payload.reason)
+
+    // 尝试重新播放（如果已暂停）
+    if (this.trackManager.paused) {
+      this.trackManager.resume()
+    }
+  }
+
+  /**
+   * 处理流量停滞事件
+   *
+   * 清理会话并重新连接，类似于网络错误的处理
+   */
+  private handleFlowStalled(payload: { reason: string }): void {
+    console.warn('[FlowStalled]', payload.reason)
+
+    // 流停滞，清理会话并重新连接
+    if (this.stateStore.get() === 'running') {
       this.cleanupSession()
 
       this.stateStore.set('restarting')
@@ -198,7 +239,7 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
   updateUrl(url: string): void {
     // Cannot update URL if already closed
     if (this.state === 'closed') {
-      this.emit('error', new WebRTCError(ErrorTypes.OTHER_ERROR, 'Cannot update URL: instance is closed'))
+      this.emit('error', new WebRTCError(ErrorTypes.STATE_ERROR, 'Cannot update URL: instance is closed'))
       return
     }
 
