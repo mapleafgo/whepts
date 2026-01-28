@@ -94,7 +94,8 @@ this.emitter.emit('play:stalled', {
 
 - Core logic in `src/` directory
 - Core modules in `src/core/` (e.g., `connection.ts`, `http.ts`, `track.ts`, `codec.ts`)
-- Utilities in `src/utils/` (e.g., `sdp.ts`, `webrtc.ts`, `flow-check.ts`)
+- Utilities in `src/utils/` (e.g., `sdp.ts`, `webrtc.ts`)
+- Monitoring in `src/monitors/` (e.g., `scheduler.ts`, `play-monitor.ts`, `flow-monitor.ts`)
 - Type definitions in `src/types.ts` (public API types)
 - Error types in `src/errors.ts`
 - Main class implementation in `src/whep.ts`
@@ -132,10 +133,38 @@ this.emitter.emit('play:stalled', {
 
 - Always use `unified-plan` SDP semantics
 - Handle ICE candidates with queuing when session URL not ready
-- Support non-advertised codecs: `pcma/8000/2` (G.711 A-law), `multiopus/48000/6` (6-channel Opus), `L16/48000/2` (Linear PCM)
+- Support non-advertised codecs:
+  - Audio: `pcma/8000/2` (G.711 A-law), `multiopus/48000/6` (6-channel Opus), `L16/48000/2` (Linear PCM)
+  - Video: `video/H265` (HEVC), `video/VP9`, `video/AV1`
 - Codec detection happens automatically at startup, emits `codecs:detected` event
+- Video stream validation: automatically reject audio-only streams with `OTHER_ERROR`
+- Video element crash recovery: automatic recovery with max 3 attempts, 1 second delay between attempts
 - Use `IntersectionObserver` for visibility-based playback control (threshold: 50%)
 - FlowCheck monitors `RTCInboundRtpStreamStats.bytesReceived` for stream health
+
+### Resource Management Lifecycle
+
+- **`stop()`** - Temporarily stop monitoring while preserving event listeners (used during restart)
+- **`destroy()`** - Permanently destroy monitors and remove all event listeners (only called by `close()`)
+- **`close()`** - Final cleanup: calls `destroy()` on monitors, destroys scheduler, releases all resources
+
+### Monitoring Architecture
+
+- Each player instance has its own `MonitorScheduler` (not singleton)
+- Monitors use scheduler to register tasks with type names (not unique IDs)
+- Task deduplication prevents duplicate monitor types
+- Adaptive throttling reduces overhead when multiple players are active
+- `PlayMonitor` handles video element playback and crash recovery
+- `FlowMonitor` handles stream flow health monitoring
+
+### Debug Logging
+
+- Use `console.warn()` for important state transitions and diagnostics
+- Log stream composition when tracks are received (audio/video check)
+- Log video element state when playing (paused, srcObject, readyState, dimensions)
+- Log track mute/unmute events to diagnose codec issues
+- Log recovery attempts for video element crashes
+- Format logs with prefixes like `[TrackManager]`, `[PlayMonitor]` for easy filtering
 
 ## Tech Stack
 
