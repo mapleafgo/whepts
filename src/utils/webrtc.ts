@@ -10,7 +10,8 @@ export class WebRtcUtils {
   static async supportsNonAdvertisedCodec(codec: string, fmtp?: string): Promise<boolean> {
     return new Promise((resolve) => {
       const pc = new RTCPeerConnection({ iceServers: [] })
-      const mediaType = 'audio'
+      // 自动检测媒体类型：video 开头为视频，其他为音频
+      const mediaType = codec.startsWith('video/') ? 'video' : 'audio'
       let payloadType = ''
 
       pc.addTransceiver(mediaType, { direction: 'recvonly' })

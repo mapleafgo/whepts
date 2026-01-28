@@ -14,9 +14,14 @@ export class CodecDetector {
   detect(): void {
     Promise.all(
       [
+        // 音频编解码器
         ['pcma/8000/2'],
         ['multiopus/48000/6', 'channel_mapping=0,4,1,2,3,5;num_streams=4;coupled_streams=2'],
         ['L16/48000/2'],
+        // 视频编解码器
+        ['video/H265'],
+        ['video/VP9'],
+        ['video/AV1'],
       ].map(c => WebRtcUtils.supportsNonAdvertisedCodec(c[0], c[1]).then(r => (r ? c[0] : false))),
     )
       .then(c => c.filter((e): e is string => e !== false))

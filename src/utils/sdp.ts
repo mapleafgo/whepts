@@ -155,6 +155,51 @@ export class SdpUtils {
   }
 
   /**
+   * Enable H265 codec.
+   */
+  static enableH265(payloadTypes: string[], section: string): string {
+    const lines = section.split('\r\n')
+
+    const payloadType = SdpUtils.reservePayloadType(payloadTypes)
+    lines[0] += ` ${payloadType}`
+    lines.splice(lines.length - 1, 0, `a=rtpmap:${payloadType} H265/90000`)
+    lines.splice(lines.length - 1, 0, `a=rtcp-fb:${payloadType} transport-cc`)
+    lines.splice(lines.length - 1, 0, `a=fmtp:${payloadType} profile-id=1`)
+
+    return lines.join('\r\n')
+  }
+
+  /**
+   * Enable VP9 codec.
+   */
+  static enableVP9(payloadTypes: string[], section: string): string {
+    const lines = section.split('\r\n')
+
+    const payloadType = SdpUtils.reservePayloadType(payloadTypes)
+    lines[0] += ` ${payloadType}`
+    lines.splice(lines.length - 1, 0, `a=rtpmap:${payloadType} VP9/90000`)
+    lines.splice(lines.length - 1, 0, `a=rtcp-fb:${payloadType} transport-cc`)
+    lines.splice(lines.length - 1, 0, `a=fmtp:${payloadType} profile-id=0`)
+
+    return lines.join('\r\n')
+  }
+
+  /**
+   * Enable AV1 codec.
+   */
+  static enableAV1(payloadTypes: string[], section: string): string {
+    const lines = section.split('\r\n')
+
+    const payloadType = SdpUtils.reservePayloadType(payloadTypes)
+    lines[0] += ` ${payloadType}`
+    lines.splice(lines.length - 1, 0, `a=rtpmap:${payloadType} AV1/90000`)
+    lines.splice(lines.length - 1, 0, `a=rtcp-fb:${payloadType} transport-cc`)
+    lines.splice(lines.length - 1, 0, `a=fmtp:${payloadType} profile-id=0`)
+
+    return lines.join('\r\n')
+  }
+
+  /**
    * Enable stereo Opus codec.
    */
   static enableStereoOpus(section: string): string {
@@ -198,6 +243,7 @@ export class SdpUtils {
       .reduce((prev, cur) => [...prev, ...cur], [])
 
     for (let i = 1; i < sections.length; i++) {
+      // 处理音频编解码器
       if (sections[i].startsWith('audio')) {
         sections[i] = SdpUtils.enableStereoOpus(sections[i])
 
@@ -210,8 +256,19 @@ export class SdpUtils {
         if (nonAdvertisedCodecs.includes('L16/48000/2')) {
           sections[i] = SdpUtils.enableL16(payloadTypes, sections[i])
         }
+      }
 
-        break
+      // 处理视频编解码器
+      if (sections[i].startsWith('video')) {
+        if (nonAdvertisedCodecs.includes('video/H265') || nonAdvertisedCodecs.includes('video/hevc')) {
+          sections[i] = SdpUtils.enableH265(payloadTypes, sections[i])
+        }
+        if (nonAdvertisedCodecs.includes('video/VP9') || nonAdvertisedCodecs.includes('video/vp9')) {
+          sections[i] = SdpUtils.enableVP9(payloadTypes, sections[i])
+        }
+        if (nonAdvertisedCodecs.includes('video/AV1') || nonAdvertisedCodecs.includes('video/av1')) {
+          sections[i] = SdpUtils.enableAV1(payloadTypes, sections[i])
+        }
       }
     }
 
