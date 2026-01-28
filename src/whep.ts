@@ -6,7 +6,7 @@ import { ConnectionManager } from './core/connection'
 import { HttpClient } from './core/http'
 import { TrackManager } from './core/track'
 import { ErrorTypes, WebRTCError } from './errors'
-import { FlowCheck } from './utils/flow-check'
+import { MonitorScheduler } from './monitors/scheduler'
 
 /** WebRTC/WHEP reader. */
 export default class WebRTCWhep extends EventEmitter<WhepEvents> {
@@ -17,7 +17,7 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
   private sessionUrl?: string
   private queuedCandidates: RTCIceCandidate[] = []
   private nonAdvertisedCodecs: string[] = []
-  private flowCheck: FlowCheck
+  private scheduler: MonitorScheduler
   private httpClient: HttpClient
   private connectionManager: ConnectionManager
   private trackManager: TrackManager
@@ -33,12 +33,10 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
       this.emit('state:change', { from: previous as State, to: current })
     })
 
-    this.trackManager = new TrackManager(this.conf.container, this.conf.lazyLoad)
+    // 创建调度器实例
+    this.scheduler = new MonitorScheduler()
 
-    this.flowCheck = new FlowCheck({
-      interval: 5000,
-      emitter: this,
-    })
+    this.trackManager = new TrackManager(this.conf.container, this, this.conf.lazyLoad, this.scheduler)
 
     this.httpClient = new HttpClient({
       conf: this.conf,
@@ -58,16 +56,11 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
     })
 
     // Listen to codec detection events
-    this.on('codecs:detected', (codecs: string[]) => {
-      this.handleCodecsDetected(codecs)
-    })
+    this.on('codecs:detected', (codecs: string[]) => this.handleCodecsDetected(codecs))
 
     // Listen to connection events
     this.on('candidate', (candidate: RTCIceCandidate) => this.handleCandidate(candidate))
-    this.on('track', (evt: RTCTrackEvent) => {
-      this.trackManager.onTrack(evt)
-      this.flowCheck.start()
-    })
+    this.on('track', (evt: RTCTrackEvent) => this.trackManager.onTrack(evt, this.connectionManager.getPeerConnection()))
 
     // 监听异常，并尝试处理
     this.on('error', err => this.handleError(err))
@@ -83,7 +76,7 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
     this.stateStore.set('closed')
     this.connectionManager.close()
     this.trackManager.stop()
-    this.flowCheck.close()
+    this.scheduler.destroy() // 销毁调度器
     if (this.restartTimeout) {
       clearTimeout(this.restartTimeout)
     }
@@ -97,19 +90,19 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
     }
 
     this.connectionManager.close()
-    this.flowCheck.close()
+    this.trackManager.stop()
     this.queuedCandidates = []
 
     if (this.sessionUrl) {
       fetch(this.sessionUrl, {
         method: 'DELETE',
-      }).catch(() => {}) // Ignore deletion errors
+      }).catch(() => { }) // Ignore deletion errors
       this.sessionUrl = undefined
     }
   }
 
   private handleError(err: Error | WebRTCError): void {
-    this.flowCheck.close()
+    this.trackManager.stop()
 
     if (this.stateStore.get() === 'getting_codecs') {
       this.stateStore.set('failed')
@@ -140,12 +133,6 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
   private start(): void {
     this.httpClient.requestICEServers()
       .then(iceServers => this.connectionManager.setupPeerConnection(iceServers))
-      .then((offer) => {
-        const pc = this.connectionManager.getPeerConnection()
-        if (pc)
-          this.flowCheck.setPeerConnection(pc)
-        return offer
-      })
       .then(offer => this.httpClient.sendOffer(offer))
       .then(({ sessionUrl, answer }) => this.handleOfferResponse(sessionUrl, answer))
       .catch(err => this.handleError(err))
