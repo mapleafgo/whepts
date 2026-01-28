@@ -1,5 +1,6 @@
 import type { EventEmitter } from 'eventemitter3'
 import type { MonitorScheduler } from './scheduler'
+import { ErrorTypes, WebRTCError } from '~/errors'
 import { TaskPriority } from './scheduler'
 
 /**
@@ -25,8 +26,6 @@ export class PlayMonitor {
   private lastCurrentTime = 0
   private unregisterMonitor?: () => void
   private readonly scheduler: MonitorScheduler
-  private recoveryAttempts: number = 0
-  private readonly maxRecoveryAttempts: number = 3
 
   constructor(
     private options: PlayMonitorOptions,
@@ -210,66 +209,10 @@ export class PlayMonitor {
     const errorCode = video.error?.code
     const errorMessage = video.error?.message
 
-    console.error('[PlayMonitor] Video element error:', {
-      code: errorCode,
-      message: errorMessage,
-      recoveryAttempts: this.recoveryAttempts,
-    })
+    console.error('[PlayMonitor] Video element error:', video.error)
 
     // 触发错误事件
-    this.emitter.emit('error', {
-      type: 'VideoError',
-      message: `Video element error (code: ${errorCode}): ${errorMessage}`,
-      originalError: video.error,
-    })
-
-    // 尝试恢复
-    if (this.recoveryAttempts < this.maxRecoveryAttempts) {
-      this.recoveryAttempts++
-      console.warn(`[PlayMonitor] Attempting video recovery (${this.recoveryAttempts}/${this.maxRecoveryAttempts})`)
-
-      // 延迟重试，避免快速连续失败
-      setTimeout(() => {
-        this.recoverVideo()
-      }, 1000)
-    }
-    else {
-      console.error('[PlayMonitor] Max recovery attempts reached, giving up')
-      this.emitter.emit('error', {
-        type: 'VideoError',
-        message: 'Video element failed after multiple recovery attempts',
-      })
-    }
-  }
-
-  /**
-   * 恢复 video 元素
-   *
-   * 通过清空并重新设置 srcObject 来重置 video 元素状态
-   */
-  private recoverVideo(): void {
-    try {
-      const currentSrcObject = this.container.srcObject
-
-      // 1. 清空媒体源
-      this.container.srcObject = null
-      this.container.load() // 强制重置
-
-      // 2. 短暂延迟后重新设置
-      setTimeout(() => {
-        if (currentSrcObject) {
-          this.container.srcObject = currentSrcObject
-          this.play()
-
-          // 重置恢复计数（成功恢复）
-          this.recoveryAttempts = 0
-          console.warn('[PlayMonitor] Video recovery successful')
-        }
-      }, 100)
-    }
-    catch (error) {
-      console.error('[PlayMonitor] Video recovery failed:', error)
-    }
+    this.emitter.emit('error', new WebRTCError(ErrorTypes.VIDEO_ERROR, `Video element error (code: ${errorCode}): ${errorMessage}`))
   }
 
   /**

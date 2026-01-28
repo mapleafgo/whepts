@@ -19,6 +19,7 @@ export const ErrorTypes = {
   STATE_ERROR: 'StateError', // 状态异常
   REQUEST_ERROR: 'RequestError', // 请求异常
   NOT_FOUND_ERROR: 'NotFoundError', // 没有找到
+  VIDEO_ERROR: 'VideoError', // 播放容器错误
   OTHER_ERROR: 'OtherError', // 其他错误
 }
 

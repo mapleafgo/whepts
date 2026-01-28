@@ -118,6 +118,12 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
     }
     // 运行时的其他错误 → 尝试重启
     else if (this.stateStore.get() === 'running') {
+      // 如果是容器错误，尝试重置容器
+      if (err instanceof WebRTCError && err.type === ErrorTypes.VIDEO_ERROR) {
+        this.handlePlayStalled({ reason: err.message })
+        return
+      }
+
       this.cleanupSession()
 
       this.stateStore.set('restarting')
@@ -139,10 +145,9 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
   private handlePlayStalled(payload: { reason: string }): void {
     console.warn('[PlayStalled]', payload.reason)
 
-    // 尝试重新播放（如果已暂停）
-    if (this.trackManager.paused) {
-      this.trackManager.resume()
-    }
+    this.pause()
+    this.conf.container.load()
+    setTimeout(() => this.resume(), 100)
   }
 
   /**
