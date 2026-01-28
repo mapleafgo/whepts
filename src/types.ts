@@ -28,6 +28,9 @@ export interface WhepEvents {
   'state:change': (payload: { from: State, to: State }) => void
   'candidate': (candidate: RTCIceCandidate) => void
   'track': (evt: RTCTrackEvent) => void
+  'play:success': (payload: { muted: boolean }) => void
+  'play:failed': (payload: { reason: string, muted: boolean }) => void
+  'play:stalled': (payload: { reason: string }) => void
   'error': (err: WebRTCError) => void
   'close': () => void
   'restart': () => void
