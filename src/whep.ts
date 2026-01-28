@@ -79,7 +79,7 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
   close(): void {
     this.stateStore.set('closed')
     this.connectionManager.close()
-    this.trackManager.stop()
+    this.trackManager.destroy() // 永久销毁
     this.scheduler.destroy() // 销毁调度器
     if (this.restartTimeout) {
       clearTimeout(this.restartTimeout)
@@ -106,14 +106,17 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
   }
 
   private handleError(err: Error | WebRTCError): void {
-    this.trackManager.stop()
-
-    if (this.stateStore.get() === 'getting_codecs') {
+    // 永久性错误：信号、请求、状态错误 → failed
+    if (err instanceof WebRTCError) {
+      this.cleanupSession()
       this.stateStore.set('failed')
     }
-    else if (err instanceof WebRTCError) {
+    // 初始化阶段的其他错误 → failed
+    else if (this.stateStore.get() === 'getting_codecs') {
+      this.cleanupSession()
       this.stateStore.set('failed')
     }
+    // 运行时的其他错误 → 尝试重启
     else if (this.stateStore.get() === 'running') {
       this.cleanupSession()
 
