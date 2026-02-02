@@ -57,19 +57,6 @@ export class PlayMonitor {
    * 尝试播放媒体
    */
   async play(): Promise<void> {
-    // 调试信息
-    const videoElement = this.container as HTMLVideoElement
-    console.warn('[PlayMonitor] play() called:', {
-      paused: this.container.paused,
-      srcObject: !!this.container.srcObject,
-      muted: this.container.muted,
-      readyState: this.container.readyState,
-      videoWidth: videoElement.videoWidth,
-      videoHeight: videoElement.videoHeight,
-      currentTime: this.container.currentTime,
-      duration: this.container.duration,
-    })
-
     // 如果已经在播放，跳过播放但仍需启动监控
     if (!this.container.paused) {
       console.warn('[PlayMonitor] Already playing, starting monitoring')
