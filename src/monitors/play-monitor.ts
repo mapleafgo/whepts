@@ -187,8 +187,9 @@ export class PlayMonitor {
     // 如果 5 秒内时间前进少于 0.1 秒，认为已停滞
     if (timeAdvanced < 0.1 && !this.container.paused) {
       this.emitter.emit('play:stalled', {
-        reason: `Playback stalled: currentTime not advancing (advanced ${timeAdvanced.toFixed(2)}s in 5s)`,
+        reason: `Playback stalled: currentTime not advancing (advanced ${timeAdvanced.toFixed(2)}s in 5s), video error: ${this.container.error}`,
       })
+      return
     }
 
     this.lastCurrentTime = currentTime

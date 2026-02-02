@@ -146,7 +146,8 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
     console.warn('[PlayStalled]', payload.reason)
 
     this.pause()
-    this.conf.container.load()
+
+    // 对于 MediaStream (srcObject)，不需要 load()，直接恢复即可
     setTimeout(() => this.resume(), 100)
   }
 
