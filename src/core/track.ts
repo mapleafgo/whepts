@@ -1,27 +1,31 @@
-import type { EventEmitter } from 'eventemitter3'
 import type { MonitorScheduler } from '~/monitors/scheduler'
-import { atom } from 'nanostores'
-import { ErrorTypes, WebRTCError } from '~/errors'
+import type { MediaNotifier } from '~/types'
 import { FlowMonitor } from '~/monitors/flow-monitor'
 import { PlayMonitor } from '~/monitors/play-monitor'
 
 export class TrackManager {
   private stream?: MediaStream
   private observer?: IntersectionObserver
-  private showStore = atom<boolean>(false)
+  private visible: boolean
+  private manualPause = false
+  private videoDeadline?: ReturnType<typeof setTimeout>
+  private waitingForVideo = false
+  private readonly watchedVideoTracks = new Set<MediaStreamTrack>()
   private playMonitor: PlayMonitor
   private flowMonitor: FlowMonitor
 
   constructor(
     private container: HTMLMediaElement,
-    private eventEmitter: EventEmitter,
-    private lazyLoad: boolean = true,
+    private notify: MediaNotifier,
+    lazyLoad: boolean,
     scheduler: MonitorScheduler,
+    onFlowProgress: (pc: RTCPeerConnection) => void,
+    onFlowTimeout: (pc: RTCPeerConnection, elapsedMs: number) => void,
   ) {
     this.playMonitor = new PlayMonitor(
       {
         container,
-        emitter: this.eventEmitter,
+        notify: this.notify,
       },
       scheduler,
     )
@@ -29,60 +33,87 @@ export class TrackManager {
     // 创建流量监控器
     this.flowMonitor = new FlowMonitor(
       {
-        interval: 5000,
-        emitter: this.eventEmitter,
+        onProgress: onFlowProgress,
+        onTimeout: onFlowTimeout,
+        notify: this.notify,
       },
       scheduler,
     )
 
-    // 监听显示状态
-    this.showStore.subscribe((show) => {
-      if (show)
-        this.resume()
-      else
-        this.pause()
-    })
-
-    // 创建新的可见性观察器，自动处理暂停/恢复
-    if (this.lazyLoad) {
-      this.observer = new IntersectionObserver(
-        ([entry]) => {
-          if (entry.isIntersecting)
-            this.showStore.set(true)
-          else
-            this.showStore.set(false)
-        },
-        { threshold: 0.5 },
-      )
-
-      this.observer.observe(this.container)
-    }
-    else {
-      // 如果不启用懒加载，默认设置为显示状态
-      this.showStore.set(true)
+    this.visible = !lazyLoad
+    if (lazyLoad) {
+      const threshold = 0.5
+      this.observer = new IntersectionObserver(([entry]) => {
+        if (!entry || !this.observer)
+          return
+        this.visible = entry.isIntersecting && entry.intersectionRatio >= threshold
+        this.syncPlayback()
+      }, { threshold })
+      this.observer.observe(container)
     }
   }
 
-  onTrack(evt: RTCTrackEvent, pc?: RTCPeerConnection): void {
-    this.stream = evt.streams[0]
-
-    // 检查流中是否包含视频轨道
-    const hasVideo = this.stream.getTracks().some(t => t.kind === 'video')
-    if (!hasVideo) {
-      const error = new WebRTCError(
-        ErrorTypes.OTHER_ERROR,
-        'No video track found in stream. Only audio streams are not supported.',
-      )
-      this.eventEmitter.emit('error', error)
+  waitForVideo(timeoutMs: number): void {
+    if (this.waitingForVideo)
       return
+    this.waitingForVideo = true
+    if (this.hasVideo())
+      return
+
+    this.videoDeadline = setTimeout(() => {
+      this.videoDeadline = undefined
+      if (!this.hasVideo())
+        this.reportVideoUnavailable('No video track arrived after connecting')
+    }, timeoutMs)
+  }
+
+  private hasVideo(): boolean {
+    return this.stream?.getTracks().some(track => track.kind === 'video' && track.readyState !== 'ended') ?? false
+  }
+
+  onTrack(evt: RTCTrackEvent, pc?: RTCPeerConnection): void {
+    const incoming = evt.streams[0]
+    const previousTracks = this.stream?.getTracks() ?? []
+    const tracks = [...new Set([...previousTracks, ...(incoming?.getTracks() ?? []), ...(evt.track ? [evt.track] : [])])].filter(track => track.readyState !== 'ended')
+    if (tracks.length !== previousTracks.length || tracks.some(track => !previousTracks.includes(track))) {
+      this.playMonitor.stopMonitoring()
+      this.detachStream()
+      this.stream = !this.stream && incoming ? incoming : new MediaStream(tracks)
     }
 
-    if (this.showStore.get()) {
-      this.container.srcObject = this.stream
-      this.playMonitor.play()
+    if (evt.track?.kind === 'video' && evt.track.readyState !== 'ended' && !this.watchedVideoTracks.has(evt.track)) {
+      this.watchedVideoTracks.add(evt.track)
+      evt.track.addEventListener('ended', this.onVideoEnded)
     }
-    // 自动启动流量监控
-    this.flowMonitor.start(pc)
+
+    if (this.hasVideo()) {
+      clearTimeout(this.videoDeadline)
+      this.videoDeadline = undefined
+      this.syncPlayback()
+      this.flowMonitor.start(pc)
+    }
+  }
+
+  private onVideoEnded = (event: Event): void => {
+    const track = event.currentTarget as MediaStreamTrack
+    if (!this.watchedVideoTracks.delete(track))
+      return
+    track.removeEventListener('ended', this.onVideoEnded)
+    if (this.hasVideo())
+      return
+
+    this.playMonitor.stopMonitoring()
+    this.flowMonitor.stop()
+    this.detachStream()
+    this.reportVideoUnavailable('The last video track ended')
+  }
+
+  private reportVideoUnavailable(reason: string): void {
+    this.notify('play:failed', {
+      code: 'video-unavailable',
+      reason,
+      muted: this.container.muted,
+    })
   }
 
   get paused(): boolean {
@@ -90,32 +121,53 @@ export class TrackManager {
   }
 
   pause(): void {
-    // 暂停播放监控
-    this.playMonitor.stopMonitoring()
-    // 清除媒体源（停止渲染）
-    this.container.srcObject = null
+    this.manualPause = true
+    this.syncPlayback()
   }
 
   resume(): void {
-    if (this.stream) {
-      this.container.srcObject = this.stream
-      this.playMonitor.play()
+    this.manualPause = false
+    this.syncPlayback()
+  }
+
+  private syncPlayback(): void {
+    if (!this.visible || this.manualPause) {
+      this.playMonitor.stopMonitoring()
+      this.detachStream()
+      return
     }
+
+    if (!this.stream || !this.hasVideo() || (this.container.srcObject !== null && this.container.srcObject !== this.stream))
+      return
+
+    this.container.srcObject = this.stream
+    void this.playMonitor.play()
   }
 
   stop(): void {
+    for (const track of this.watchedVideoTracks)
+      track.removeEventListener('ended', this.onVideoEnded)
+    this.watchedVideoTracks.clear()
+    clearTimeout(this.videoDeadline)
+    this.videoDeadline = undefined
+    this.waitingForVideo = false
     this.playMonitor.stopMonitoring()
     this.flowMonitor.stop()
+    this.detachStream()
     this.stream = undefined
+  }
+
+  private detachStream(): void {
+    if (this.stream && this.container.srcObject === this.stream)
+      this.container.srcObject = null
   }
 
   /**
    * 永久销毁（仅在 WebRTCWhep.close() 时调用）
    */
   destroy(): void {
+    this.stop()
     this.playMonitor.destroy()
-    this.flowMonitor.stop()
-    this.stream = undefined
 
     // 清理观察器
     if (this.observer) {

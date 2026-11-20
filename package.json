@@ -26,7 +26,12 @@
   ],
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
   "scripts": {
+    "prepack": "npm run build",
+    "test": "npm run build && node --test tests/*.test.mjs",
     "build": "rollup --config --environment NODE_ENV:production",
     "build:debug": "rollup --config",
     "lint": "eslint",

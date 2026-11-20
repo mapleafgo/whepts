@@ -1,37 +1,41 @@
-/** Type for parsed offer data */
-export interface ParsedOffer {
-  iceUfrag: string
-  icePwd: string
-  medias: string[]
+interface IceAttributes {
+  iceUfrag?: string
+  icePwd?: string
+}
+
+interface MediaSection extends IceAttributes {
+  description: string
+  mid?: string
+}
+
+export interface ParsedOffer extends IceAttributes {
+  media: MediaSection[]
 }
 
 /**
  * SDP processing utilities
  */
 export class SdpUtils {
-  /**
-   * Parse an offer SDP into iceUfrag, icePwd, and medias.
-   */
+  /** Parse the media identifiers and ICE attributes at their SDP scope. */
   static parseOffer(sdp: string): ParsedOffer {
-    const ret: ParsedOffer = {
-      iceUfrag: '',
-      icePwd: '',
-      medias: [],
-    }
-
-    for (const line of sdp.split('\r\n')) {
+    const offer: ParsedOffer = { media: [] }
+    let section: MediaSection | undefined
+    for (const line of sdp.split(/\r?\n/)) {
       if (line.startsWith('m=')) {
-        ret.medias.push(line.slice('m='.length))
+        section = { description: line.slice(2) }
+        offer.media.push(section)
       }
-      else if (ret.iceUfrag === '' && line.startsWith('a=ice-ufrag:')) {
-        ret.iceUfrag = line.slice('a=ice-ufrag:'.length)
+      else if (line.startsWith('a=ice-ufrag:')) {
+        (section ?? offer).iceUfrag = line.slice('a=ice-ufrag:'.length)
       }
-      else if (ret.icePwd === '' && line.startsWith('a=ice-pwd:')) {
-        ret.icePwd = line.slice('a=ice-pwd:'.length)
+      else if (line.startsWith('a=ice-pwd:')) {
+        (section ?? offer).icePwd = line.slice('a=ice-pwd:'.length)
+      }
+      else if (section && line.startsWith('a=mid:')) {
+        section.mid = line.slice('a=mid:'.length)
       }
     }
-
-    return ret
+    return offer
   }
 
   /**
@@ -107,13 +111,14 @@ export class SdpUtils {
     )
     lines.splice(lines.length - 1, 0, `a=rtcp-fb:${payloadType} transport-cc`)
 
+    // 6.1 和 7.1 使用 libopus 的 Vorbis 声道映射。
     payloadType = SdpUtils.reservePayloadType(payloadTypes)
     lines[0] += ` ${payloadType}`
     lines.splice(lines.length - 1, 0, `a=rtpmap:${payloadType} multiopus/48000/7`)
     lines.splice(
       lines.length - 1,
       0,
-      `a=fmtp:${payloadType} channel_mapping=0,4,1,2,3,5,6;num_streams=4;coupled_streams=4`,
+      `a=fmtp:${payloadType} channel_mapping=0,4,1,2,3,5,6;num_streams=4;coupled_streams=3`,
     )
     lines.splice(lines.length - 1, 0, `a=rtcp-fb:${payloadType} transport-cc`)
 
@@ -123,7 +128,7 @@ export class SdpUtils {
     lines.splice(
       lines.length - 1,
       0,
-      `a=fmtp:${payloadType} channel_mapping=0,6,1,4,5,2,3,7;num_streams=5;coupled_streams=4`,
+      `a=fmtp:${payloadType} channel_mapping=0,6,1,2,3,4,5,7;num_streams=5;coupled_streams=3`,
     )
     lines.splice(lines.length - 1, 0, `a=rtcp-fb:${payloadType} transport-cc`)
 
@@ -275,36 +280,42 @@ export class SdpUtils {
     return sections.join('m=')
   }
 
-  /**
-   * Generate an SDP fragment.
-   */
-  static generateSdpFragment(od: ParsedOffer, candidates: RTCIceCandidate[]): string {
-    const candidatesByMedia: Record<number, RTCIceCandidate[]> = {}
+  /** Serialize candidates and per-media end markers against the original offer. */
+  static generateSdpFragment(offer: ParsedOffer, candidates: RTCIceCandidate[]): string {
+    const bySection = new Map<MediaSection, string[]>()
     for (const candidate of candidates) {
-      const mid = candidate.sdpMLineIndex
-      if (mid) {
-        if (candidatesByMedia[mid] === undefined) {
-          candidatesByMedia[mid] = []
-        }
-        candidatesByMedia[mid].push(candidate)
-      }
+      const { sdpMid, sdpMLineIndex } = candidate
+      const media = sdpMid != null
+        ? offer.media.find(section => section.mid === sdpMid)
+        : sdpMLineIndex == null ? undefined : offer.media[sdpMLineIndex]
+      if (!media?.mid)
+        continue
+
+      const line = candidate.candidate ? `a=${candidate.candidate}` : 'a=end-of-candidates'
+      const lines = bySection.get(media)
+      if (lines)
+        lines.push(line)
+      else
+        bySection.set(media, [line])
     }
 
-    let frag = `a=ice-ufrag:${od.iceUfrag}\r\n` + `a=ice-pwd:${od.icePwd}\r\n`
+    if (bySection.size === 0)
+      return ''
 
-    let mid = 0
-
-    for (const media of od.medias) {
-      if (candidatesByMedia[mid] !== undefined) {
-        frag += `m=${media}\r\n` + `a=mid:${mid}\r\n`
-
-        for (const candidate of candidatesByMedia[mid]) {
-          frag += `a=${candidate.candidate}\r\n`
-        }
-      }
-      mid++
+    const fragment: string[] = []
+    SdpUtils.appendIceAttributes(fragment, offer)
+    for (const [media, lines] of bySection) {
+      fragment.push(`m=${media.description}`, `a=mid:${media.mid}`)
+      SdpUtils.appendIceAttributes(fragment, media)
+      fragment.push(...lines)
     }
+    return `${fragment.join('\r\n')}\r\n`
+  }
 
-    return frag
+  private static appendIceAttributes(lines: string[], attributes: IceAttributes): void {
+    if (attributes.iceUfrag)
+      lines.push(`a=ice-ufrag:${attributes.iceUfrag}`)
+    if (attributes.icePwd)
+      lines.push(`a=ice-pwd:${attributes.icePwd}`)
   }
 }

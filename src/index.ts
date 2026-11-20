@@ -1,7 +1,7 @@
-import type { Conf, State, WhepEvents } from './types'
-import { ErrorTypes, WebRTCError } from './errors'
-import WebRTCWhep from './whep'
+import type { Conf, State, WhepDiagnostic, WhepEvents } from './types.js'
+import { ErrorTypes, WebRTCError } from './errors.js'
+import WebRTCWhep from './whep.js'
 
-export { Conf, ErrorTypes, State, WebRTCError, WhepEvents }
+export { Conf, ErrorTypes, State, WebRTCError, WhepDiagnostic, WhepEvents }
 
 export default WebRTCWhep

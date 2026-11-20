@@ -1,305 +1,105 @@
 # WhepTS Player
 
-基于 [mediamtx](https://github.com/bluenviron/mediamtx) 的 WebRTC WHEP 播放器，支持 ZLM 和 Mediamtx 的播放地址。
+WhepTS 是浏览器中的单源 WebRTC WHEP 播放器。播放器管理连接、媒体挂载与清理；调用方负责选择地址、凭据和备用流。
 
-## 简介
-
-本项目基于 [mediamtx 的 reader.js](https://github.com/bluenviron/mediamtx/blob/main/internal/servers/webrtc/reader.js) 编写，实现了对 ZLM (ZLMediaKit) 和 Mediamtx 的 WebRTC WHEP 协议播放地址的支持。
-
-WebRTC WHEP (WebRTC HTTP Egress Protocol) 是一种用于从 WebRTC 服务器获取媒体流的协议，允许客户端通过 HTTP 请求获取实时音视频流。
-
-## 功能特性
-
-- 支持 ZLMediaKit 的 WHEP 播放地址
-- 支持 Mediamtx 的 WHEP 播放地址
-- 基于 WebRTC 的低延迟播放
-- TypeScript 编写，类型安全
-- 支持事件监听和错误处理
-- 可配置的连接参数
-- 自动断流检测与重连
-- 支持动态更新播放地址（用于故障切换）
-- **支持多种视频编解码器**：自动检测 H265/HEVC、VP9、AV1
-- **支持非公告音频编解码器**：G.711 A-law、多声道 Opus、线性 PCM
-- **视频流验证**：自动检测并拒绝纯音频流，只接受包含视频的流
-- **Video 元素崩溃恢复**：自动检测并恢复崩溃的视频元素（最多 3 次）
-- **自适应流健康监测**：初始高频检测，稳定后低频检测
-- **支持仅可视区域播放控制**（IntersectionObserver，50% 阈值）
-- **懒加载优化**：视频不在可视区域时暂停渲染，保持连接
-- **统一监控调度**：多播放器场景下高效管理监控任务
-- **ICE 候选队列管理**：自动排队发送本地 ICE 候选
-- **详细的调试日志**：便于排查播放问题
-- **分离的资源管理**：stop() 暂停保留监听器，destroy() 完全清理
-
-## 安装
+## 快速开始
 
 ```bash
 npm i whepts
 ```
 
-或
-
-```bash
-pnpm add whepts
-```
-
-## 使用方法
-
-### 基本用法
+页面提供 `<video id="video" playsinline></video>` 和 `<button id="resume" hidden>播放</button>`。
 
 ```typescript
 import WebRTCWhep from 'whepts'
 
-// 配置参数
-const config = {
-  url: 'https://your-server:port/index/api/whep?app={app}&stream={stream}', // WHEP 服务器地址
-  container: document.getElementById('video') as HTMLMediaElement, // 视频播放容器
-  lazyLoad: true, // 启用懒加载（自动暂停/恢复），默认：true
-}
+const container = document.querySelector<HTMLVideoElement>('#video')
+const resume = document.querySelector<HTMLButtonElement>('#resume')
+if (!container || !resume)
+  throw new Error('Missing video or play button')
 
-// 创建播放器实例
-const player = new WebRTCWhep(config)
+const player = new WebRTCWhep({ url: 'https://media.example.com/live/whep', container })
 
-// 监听事件
-player.on('state:change', ({ from, to }) => {
-  console.log(`状态变化: ${from} → ${to}`)
+player.on('play:failed', ({ code, reason }) => {
+  if (code === 'autoplay-blocked')
+    resume.hidden = false
+  else
+    console.warn(reason)
 })
-
-player.on('error', (error) => {
-  console.error('播放错误:', error.message, error.type)
+player.on('error', ({ type, phase, httpStatus, message }) => {
+  console.error(type, phase, httpStatus, message)
 })
-
-player.on('track', (evt) => {
-  console.log('接收到媒体轨道:', evt.track.kind)
-})
-
-// 播放器会自动开始播放
+resume.addEventListener('click', () => player.resume())
 ```
 
-### 高级用法
+页面或组件卸载时调用 `player.close()`，并移除调用方自己注册的 DOM 监听器。播放器不会自动静音；若希望静音播放，由调用方设置媒体元素。
 
-```typescript
-import WebRTCWhep from 'whepts'
+## 配置
 
-// 配置参数
-const config = {
-  url: 'http://localhost:8889/{stream}/whep', // WHEP 服务器地址
-  container: document.getElementById('video') as HTMLMediaElement, // 视频播放容器
-  user: 'username', // 认证用户名（可选）
-  pass: 'password', // 认证密码（可选）
-  token: 'token', // 认证令牌（可选）
-  iceServers: [ // ICE 服务器配置（可选）
-    {
-      urls: ['stun:stun.l.google.com:19302']
-    }
-  ],
-  lazyLoad: true, // 启用懒加载（自动暂停/恢复），默认：true（可选）
-}
+| 字段 | 用途 |
+| --- | --- |
+| `url` | 绝对 HTTP(S) WHEP 地址，不允许内嵌用户名或密码；非法初始地址同步抛出 `WebRTCError`。 |
+| `container` | 借用的媒体元素；同一元素只交给一个活跃播放器。 |
+| `user` / `pass` | 可选 Basic 认证。配置用户名时优先于 Bearer。 |
+| `token` | 可选 Bearer 令牌。凭据不随 `updateUrl()` 转发到其他来源。 |
+| `iceServers` | 可选 ICE 服务器；非空列表替代 OPTIONS 发现。 |
+| `iceMode` | 默认 `trickle`；`complete` 等待 ICE 收集完成后发送完整 offer，不发候选 PATCH。适用于不支持 Trickle ICE 的部署。 |
+| `lazyLoad` | 默认 `true`。至少 50% 可见才挂载播放，隐藏时保持传输。 |
+| `onDiagnostic` | 可选回调，接收远端会话清理失败（`delete-session`）或流量采样超时（`sample-flow`）的 `WhepDiagnostic`。包含 `playerId`、诊断发出时的 `state`、`operation`、`phase`、`reason`、`elapsedMs`。有归属的连接尝试时提供 `attemptId`，有 HTTP 响应时提供 `httpStatus`。不含会话 URL、凭据或响应正文，也不会触发重连。 |
 
-// 创建播放器实例
-const player = new WebRTCWhep(config)
+## 浏览器兼容性
 
-// 监听所有事件
-player.on('codecs:detected', (codecs) => {
-  console.log('检测到的非公告编解码器:', codecs)
-  // 可能包含: 'pcma/8000/2', 'multiopus/48000/6', 'L16/48000/2'
-})
+使用浏览器的**最新稳定版，并安装最新小版本更新**。较早版本不在兼容承诺内；实际验证范围见[验收记录](docs/plans/2026-11-20-whepts-acceptance.md)。H.265（HEVC）的 WebRTC 协商和实际解码还取决于浏览器、操作系统及设备；最新版不代表一定可播。面向未知客户端时，建议由服务端另行提供 H.264 流供调用方选择。
 
-player.on('state:change', ({ from, to }) => {
-  console.log(`状态: ${from} → ${to}`)
-})
+## 服务端接入
 
-player.on('candidate', (candidate) => {
-  console.log('ICE 候选:', candidate.candidate)
-})
+- **MediaMTX**：端点形如 `http://localhost:8889/live/whep`，使用默认的 `trickle`。
+- **ZLMediaKit**：端点形如 `https://media.example.com/index/api/whep?app=live&stream=camera`，不支持 Trickle ICE 的部署使用 `iceMode: 'complete'`。
 
-player.on('track', (evt) => {
-  console.log('媒体轨道:', evt.track.kind)
-})
+跨域部署须允许实际用到的方法和请求头，并在最终 POST 响应中暴露 `Location`（Trickle ICE 如使用 `ETag`，也应暴露）。会话地址本身也须允许跨域 DELETE。缺少可读地址时，播放器不猜测 PATCH 或 DELETE 的目标。部署对照及实测范围见[验收记录](docs/plans/2026-11-20-whepts-acceptance.md)。
 
-player.on('error', (error) => {
-  console.error('错误:', error.message, error.type)
-})
+## 播放控制与状态
 
-player.on('close', () => {
-  console.log('连接已关闭')
-})
+- `pause()` / `resume()`：停止或恢复播放，不重建连接；手动暂停不因可见性变化而解除。
+- `updateUrl(url)`：用有效的新地址替换当前连接；同地址表示显式重试，非法地址通过 `error` 报告且保留当前连接。跨来源新地址需要不同凭据时，关闭旧实例后用新配置构造实例。
+- `close()`：终态，重复调用无额外副作用。立即停止播放并解绑媒体，不等待远端确认。已登记会话时，后台发送一次 DELETE，旧 PeerConnection 在请求结束或 5 秒期限到达时关闭；无会话地址则立即关闭连接。
+- `state`：`getting_codecs`、`running`、`restarting`、`failed` 或 `closed`。`running` 表示已启动连接尝试，不代表连通或已出首帧。
+- `paused`：反映媒体元素当前是否没有挂载源，不是传输状态。
 
-player.on('restart', () => {
-  console.log('正在重连...')
-})
+首次建连失败由调用方决定是否重试。已连通的传输明确失败后，播放器可有限重连同一来源；不会自动切备用流。流量和播放停滞仅通知，不触发重连。
 
-// 检查流状态
-console.log('流状态:', player.isRunning)
+## 事件
 
-// 暂停播放
-player.pause()
+| 事件 | 含义 |
+| --- | --- |
+| `codecs:detected` | 检测到的扩展编解码器列表。 |
+| `state:change` | `{ from, to }` 状态变化。 |
+| `candidate`、`track` | 浏览器原生 ICE 候选和轨道事件。 |
+| `play:success` | `play()` 成功，包含 `muted`；不保证首帧已显示。 |
+| `play:failed` | `{ code, reason, muted }`。原因码为 `autoplay-blocked`、`video-unavailable`、`element-recovery-exhausted` 或 `playback-error`；不要解析英文说明来决定流程。 |
+| `play:stalled`、`flow:stalled` | 观察到播放或流量停滞，包含英文 `reason`。 |
+| `error` | `WebRTCError`，使用 `type` 分类；`phase` 和 `httpStatus` 在适用时提供；建连超时带有 `reason: 'setup-timeout'`。 |
+| `restart`、`close` | 已安排同源重连、本地关闭完成。 |
 
-// 恢复播放
-player.resume()
+当前导出的 `ErrorTypes` 包含 `SIGNAL_ERROR`、`STATE_ERROR`、`REQUEST_ERROR`、`NOT_FOUND_ERROR`、`VIDEO_ERROR` 和 `OTHER_ERROR`。
 
-// 关闭播放器
-player.close()
-```
-
-### 更新播放地址
-
-当播放失败时，可以使用 `updateUrl()` 方法切换到新的播放地址：
-
-```typescript
-import WebRTCWhep from 'whepts'
-
-const player = new WebRTCWhep({
-  url: 'https://your-server:port/stream.whep',
-  container: document.getElementById('video') as HTMLMediaElement,
-})
-
-// 监听错误事件
-player.on('error', async (error) => {
-  console.error('播放错误:', error.message)
-
-  // 从服务器获取新的播放地址
-  const newUrl = await fetchNewStreamUrl()
-
-  // 使用新地址重新开始播放
-  player.updateUrl(newUrl)
-})
-
-// 或者手动更新地址
-const newStreamUrl = 'https://another-server:port/stream.whep'
-player.updateUrl(newStreamUrl)
-```
-
-## 支持的播放地址格式
-
-### ZLMediaKit
-
-```text
-https://zlmediakit.com/index/api/whep?app={app}&stream={stream}
-```
-
-### Mediamtx
-
-```text
-http://localhost:8889/{stream}/whep
-```
-
-## API
-
-### WebRTCWhep 类
-
-#### 构造函数
-
-```typescript
-WebRTCWhep(conf)
-```
-
-- `conf`: 配置对象
-  - `url`: WHEP 服务器地址
-  - `container`: HTML 媒体元素容器
-  - `user`: 认证用户名（可选）
-  - `pass`: 认证密码（可选）
-  - `token`: 认证令牌（可选）
-  - `iceServers`: ICE 服务器配置（可选）
-  - `lazyLoad`: 启用懒加载（自动暂停/恢复），默认：true（可选）
-
-#### 事件
-
-```typescript
-// 编解码器检测事件
-player.on('codecs:detected', (codecs) => {
-  console.log('检测到的非公告编解码器:', codecs)
-})
-
-// 状态变化事件
-player.on('state:change', ({ from, to }) => {
-  console.log(`状态: ${from} → ${to}`)
-})
-
-// ICE 候选事件
-player.on('candidate', (candidate) => {
-  console.log('ICE 候选:', candidate.candidate)
-})
-
-// 媒体轨道事件
-player.on('track', (evt) => {
-  console.log('媒体轨道:', evt.track.kind)
-})
-
-// 错误事件
-player.on('error', (error) => {
-  console.error('错误:', error.message, error.type)
-})
-
-// 连接关闭事件
-player.on('close', () => {
-  console.log('连接已关闭')
-})
-
-// 重连事件
-player.on('restart', () => {
-  console.log('正在重连...')
-})
-```
-
-**事件类型：**
-- `codecs:detected`: 检测到浏览器支持的非公告编解码器，包含编解码器列表
-- `state:change`: 状态变化，包含 `from` 和 `to` 状态
-- `candidate`: ICE 候选
-- `track`: 媒体轨道
-- `error`: 错误
-- `close`: 连接关闭
-- `restart`: 开始重连
-
-#### 属性
-
-- `state`: 当前状态 (`getting_codecs` | `running` | `restarting` | `closed` | `failed`)
-- `isRunning`: 流是否正在运行
-- `paused`: 播放器是否已暂停
-
-#### 方法
-
-- `close()`: 关闭播放器和所有资源
-- `pause()`: 暂停播放
-- `resume()`: 恢复播放
-- `updateUrl(url)`: 更新播放地址并重新开始播放（用于播放失败时切换到新的 URL）
-- `on(event, listener)`: 注册事件监听器
-
-#### 错误类型
-
-- `ErrorTypes.SIGNAL_ERROR`: 信令异常
-- `ErrorTypes.STATE_ERROR`: 状态异常
-- `ErrorTypes.NETWORK_ERROR`: 网络错误
-- `ErrorTypes.MEDIA_ERROR`: 媒体错误
-- `ErrorTypes.OTHER_ERROR`: 其他错误
-
-## 构建
+## 开发与验证
 
 ```bash
-npm run build
+pnpm install --frozen-lockfile
+npm test
+npm run lint
+pnpm exec tsc --noEmit
+npm run build:debug
 ```
 
-## 开发
+排查问题时运行 `npm run build:debug`，使用本地构建并在 DevTools 控制台开启 Verbose。调试构建保留源码映射，打印脱敏的状态变化、错误阶段、HTTP 状态和清理／采样诊断。生产构建移除控制台日志，应用仍可使用 `error` 和 `onDiagnostic`。
 
-```bash
-npm run dev
-```
+`npm test` 构建生产入口并运行 Node 回归测试；它不替代真实浏览器互通测试。`npm pack` 会重新构建，不会自动发布。
 
-## 项目结构
-
-```text
-src/
-├── index.ts          # 主要的 WebRTCWhep 类实现
-└── utils/
-    └── observer.ts   # 可见性监测工具
-```
-
-## 依赖
-
-- TypeScript
-- WebRTC API
-- eventemitter3 - 事件发射器
-- nanostores - 状态管理
-- 相关构建工具 (Rollup, ESLint)
+- [打包验收](tests/package-smoke.sh)：运行 `bash tests/package-smoke.sh`，检查实际包的离线安装、ESM 入口及严格 TypeScript 类型。
+- [Chrome 环回测试](tests/browser-redirect.py)：生产构建后运行 `python tests/browser-redirect.py`（需要 Python Playwright 和 Chrome，不需要媒体服务器）。
+- 双服务器互通：[MediaMTX](tests/browser-mediamtx.py) 与 [ZLMediaKit](tests/browser-zlm.py) 使用独立浏览器脚本。启动条件、实测版本及远端清理限制见 [A1–A9 验收记录](docs/plans/2026-11-20-whepts-acceptance.md)。
 
 ## 许可证
 

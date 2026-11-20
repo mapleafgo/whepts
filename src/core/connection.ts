@@ -1,4 +1,3 @@
-import type EventEmitter from 'eventemitter3'
 import type { ParsedOffer } from '../utils/sdp'
 import type { State } from '~/types'
 import { ErrorTypes, WebRTCError } from '~/errors'
@@ -6,8 +5,12 @@ import { SdpUtils } from '../utils/sdp'
 
 export interface ConnectionManagerOptions {
   getState: () => State
-  emitter: EventEmitter
+  onCandidate: (candidate: RTCIceCandidate) => void
+  onTrack: (event: RTCTrackEvent, pc: RTCPeerConnection) => void
   getNonAdvertisedCodecs: () => string[]
+  disconnectGraceMs: number
+  onConnected: () => void
+  onTransportFailure: (wasConnected: boolean) => void
 }
 
 /**
@@ -18,13 +21,15 @@ export interface ConnectionManagerOptions {
 export class ConnectionManager {
   private pc?: RTCPeerConnection
   private offerData?: ParsedOffer
+  private wasConnected = false
+  private disconnectTimer?: ReturnType<typeof setTimeout>
 
   constructor(private options: ConnectionManagerOptions) {}
 
   /**
    * 创建并配置 PeerConnection
    */
-  async setupPeerConnection(iceServers: RTCIceServer[]): Promise<string> {
+  async setupPeerConnection(iceServers: RTCIceServer[], signal: AbortSignal, waitForIce: boolean): Promise<string> {
     if (this.options.getState() !== 'running')
       throw new WebRTCError(ErrorTypes.STATE_ERROR, 'closed')
 
@@ -38,20 +43,60 @@ export class ConnectionManager {
     pc.addTransceiver('video', { direction })
     pc.addTransceiver('audio', { direction })
 
-    // 注册事件处理器（使用类方法引用，便于管理和清理）
-    pc.onicecandidate = this.handleIceCandidate
-    pc.onconnectionstatechange = this.handleConnectionState
-    pc.oniceconnectionstatechange = this.handleIceConnectionState
-    pc.ontrack = this.handleTrack
+    pc.onicecandidate = (event) => {
+      if (this.pc === pc)
+        this.handleIceCandidate(event)
+    }
+    pc.onconnectionstatechange = () => {
+      if (this.pc === pc)
+        this.handleConnectionState(pc)
+    }
+    pc.ontrack = (event) => {
+      if (this.pc === pc)
+        this.options.onTrack(event, pc)
+    }
 
-    return pc.createOffer().then((offer) => {
+    return pc.createOffer().then(async (offer) => {
+      signal.throwIfAborted()
+      if (this.pc !== pc)
+        throw new WebRTCError(ErrorTypes.STATE_ERROR, 'Peer connection was replaced')
       if (!offer.sdp)
         throw new WebRTCError(ErrorTypes.SIGNAL_ERROR, 'Failed to create offer SDP')
 
       offer.sdp = SdpUtils.editOffer(offer.sdp, this.options.getNonAdvertisedCodecs())
       this.offerData = SdpUtils.parseOffer(offer.sdp)
 
-      return pc.setLocalDescription(offer).then(() => offer.sdp!)
+      await pc.setLocalDescription(offer)
+      signal.throwIfAborted()
+      if (!waitForIce)
+        return offer.sdp
+
+      await this.waitForIceGathering(pc, signal)
+      const sdp = pc.localDescription?.sdp
+      if (!sdp)
+        throw new WebRTCError(ErrorTypes.SIGNAL_ERROR, 'Missing gathered offer SDP')
+      return sdp
+    })
+  }
+
+  private waitForIceGathering(pc: RTCPeerConnection, signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted()
+    if (pc.iceGatheringState === 'complete')
+      return Promise.resolve()
+
+    return new Promise((resolve, reject) => {
+      const finish = (event: Event): void => {
+        if (!signal.aborted && pc.iceGatheringState !== 'complete')
+          return
+        pc.removeEventListener('icegatheringstatechange', finish)
+        signal.removeEventListener('abort', finish)
+        if (event.type === 'abort' || signal.aborted)
+          reject(signal.reason)
+        else
+          resolve()
+      }
+      pc.addEventListener('icegatheringstatechange', finish)
+      signal.addEventListener('abort', finish, { once: true })
     })
   }
 
@@ -79,9 +124,23 @@ export class ConnectionManager {
   }
 
   close(): void {
-    this.pc?.close()
+    this.detachPeer()?.close()
+  }
+
+  /** Detach the current peer without closing it; the caller owns its disposal. */
+  detachPeer(): RTCPeerConnection | undefined {
+    const pc = this.pc
     this.pc = undefined
     this.offerData = undefined
+    this.wasConnected = false
+    this.clearDisconnectTimer()
+    if (!pc)
+      return
+
+    pc.onicecandidate = null
+    pc.onconnectionstatechange = null
+    pc.ontrack = null
+    return pc
   }
 
   /**
@@ -92,80 +151,32 @@ export class ConnectionManager {
       return
 
     if (evt.candidate)
-      this.options.emitter.emit('candidate', evt.candidate)
+      this.options.onCandidate(evt.candidate)
   }
 
-  /**
-   * 处理连接状态变化
-   *
-   * connectionState 可能的值：
-   * - 'new': 刚创建，还未连接
-   * 'connecting': 正在连接中
-   * 'connected': 已连接
-   * - 'disconnected': 已断开（可能短暂）
-   * - 'failed': 连接失败
-   * - 'closed': 已关闭
-   *
-   * 连接失败或关闭属于流断开，触发 flow:stalled 事件进行恢复。
-   */
-  private handleConnectionState = (): void => {
-    if (this.options.getState() !== 'running' || !this.pc)
+  private handleConnectionState(pc: RTCPeerConnection): void {
+    const { connectionState } = pc
+    if (connectionState === 'disconnected' && this.wasConnected) {
+      this.disconnectTimer ??= setTimeout(() => {
+        this.disconnectTimer = undefined
+        if (this.pc === pc && pc.connectionState === 'disconnected')
+          this.options.onTransportFailure(true)
+      }, this.options.disconnectGraceMs)
       return
+    }
 
-    const { connectionState } = this.pc
-
-    // 连接失败或关闭，触发流停滞事件
-    if (connectionState === 'failed' || connectionState === 'closed') {
-      this.options.emitter.emit('flow:stalled', {
-        reason: `peer connection ${connectionState}`,
-      })
+    this.clearDisconnectTimer()
+    if (connectionState === 'connected') {
+      this.wasConnected = true
+      this.options.onConnected()
+    }
+    else if (connectionState === 'failed') {
+      this.options.onTransportFailure(this.wasConnected)
     }
   }
 
-  /**
-   * 处理 ICE 连接状态变化
-   *
-   * iceConnectionState 可能的值：
-   * - 'new': 刚创建，还未检查
-   * - 'checking': 正在检查
-   * 'connected': ICE 连接成功
-   * 'completed': ICE 连接完成
-   * 'failed': ICE 连接失败
-   * 'disconnected': ICE 连接断开（可能短暂）
-   */
-  private handleIceConnectionState = (): void => {
-    if (this.options.getState() !== 'running' || !this.pc)
-      return
-
-    const { iceConnectionState } = this.pc
-
-    // ICE 连接失败，尝试重启 ICE
-    if (iceConnectionState === 'failed') {
-      this.restartIceConnection()
-    }
-  }
-
-  /**
-   * 处理媒体轨道事件
-   */
-  private handleTrack = (evt: RTCTrackEvent): void => {
-    this.options.emitter.emit('track', evt)
-  }
-
-  /**
-   * 重启 ICE 连接
-   *
-   * 当 ICE 连接失败时，尝试重启 ICE 以恢复连接
-   */
-  private restartIceConnection(): void {
-    if (!this.pc)
-      return
-
-    try {
-      this.pc.restartIce()
-    }
-    catch (error) {
-      console.error('[ConnectionManager] ICE restart failed:', error)
-    }
+  private clearDisconnectTimer(): void {
+    clearTimeout(this.disconnectTimer)
+    this.disconnectTimer = undefined
   }
 }

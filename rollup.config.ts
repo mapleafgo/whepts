@@ -22,9 +22,7 @@ export default {
   plugins: [
     del({ targets: 'dist' }),
     commonjs(),
-    eslint({
-      fix: true,
-    }),
+    eslint(),
     typescript({
       importHelpers: true,
       sourceMap: !isProduction,

@@ -1,13 +1,16 @@
-import type EventEmitter from 'eventemitter3'
 import type { MonitorScheduler } from './scheduler'
+import type { MediaNotifier } from '~/types'
 import { TaskPriority } from './scheduler'
+
+const FLOW_SAMPLE_INTERVAL_MS = 5000
+const FLOW_STABILIZATION_MS = 30000
 
 /**
  * FlowMonitor 配置选项
  */
 export interface FlowMonitorOptions {
   /** 基础检查间隔（毫秒），初始阶段使用 */
-  interval: number
+  interval?: number
   /** 稳定后的检查间隔（毫秒），默认为 interval 的 2 倍 */
   stableInterval?: number
   /** 连续无进度的最大次数，超过则判定为断流，默认为 3 */
@@ -15,7 +18,9 @@ export interface FlowMonitorOptions {
   /** 稳定时间（毫秒），超过此时间后降低检查频率，默认为 30000（30秒） */
   stabilizationTime?: number
   /** 事件发射器 */
-  emitter: EventEmitter
+  notify: MediaNotifier
+  onTimeout: (pc: RTCPeerConnection, elapsedMs: number) => void
+  onProgress: (pc: RTCPeerConnection) => void
 }
 
 /**
@@ -36,10 +41,20 @@ export class FlowMonitor {
   private readonly stabilizationTime: number
   private readonly scheduler: MonitorScheduler
 
-  private lastBytesReceived: number = 0
-  private isFirstCheck: boolean = true
+  private lastBytesReceived = new Map<string, number>()
   private unregisterMonitor?: () => void
   private pc?: RTCPeerConnection
+  private generation = 0
+  private visibilityGeneration = 0
+  private sampleTimeout?: ReturnType<typeof setTimeout>
+  private page?: Document
+  private onVisibilityChange = (): void => {
+    this.visibilityGeneration++
+    this.reset()
+  }
+
+  private scheduledInterval?: number
+  private lastSampleAt?: number
 
   // 状态跟踪
   private consecutiveNoProgress: number = 0
@@ -50,20 +65,23 @@ export class FlowMonitor {
     scheduler: MonitorScheduler,
   ) {
     this.scheduler = scheduler
-    this.baseInterval = options.interval
-    this.stableInterval = options.stableInterval || (options.interval * 2)
+    this.baseInterval = options.interval ?? FLOW_SAMPLE_INTERVAL_MS
+    this.stableInterval = options.stableInterval || (this.baseInterval * 2)
     this.maxNoProgress = options.maxNoProgress || 3
-    this.stabilizationTime = options.stabilizationTime || 30000 // 30秒
+    this.stabilizationTime = options.stabilizationTime || FLOW_STABILIZATION_MS
   }
 
   /**
    * 启动断流检测
    */
   start(pc?: RTCPeerConnection): void {
-    if (!pc) {
+    if (!pc || this.pc === pc) {
       return
     }
+    this.stop()
     this.pc = pc
+    this.page = typeof document === 'undefined' ? undefined : document
+    this.page?.addEventListener('visibilitychange', this.onVisibilityChange)
     this.reset()
     this.startTime = Date.now()
     this.scheduleCheck()
@@ -73,6 +91,12 @@ export class FlowMonitor {
    * 停止断流检测并清理资源
    */
   stop(): void {
+    this.generation++
+    clearTimeout(this.sampleTimeout)
+    this.sampleTimeout = undefined
+    this.page?.removeEventListener('visibilitychange', this.onVisibilityChange)
+    this.page = undefined
+    this.scheduledInterval = undefined
     if (this.unregisterMonitor) {
       this.unregisterMonitor()
       this.unregisterMonitor = undefined
@@ -85,24 +109,26 @@ export class FlowMonitor {
    */
   reset(): void {
     this.consecutiveNoProgress = 0
-    this.isFirstCheck = true
-    this.lastBytesReceived = 0
+    this.lastBytesReceived.clear()
+    this.lastSampleAt = undefined
   }
 
   /**
    * 调度检查任务
    */
-  private scheduleCheck(): void {
+  private scheduleCheck(deferFirstRun = false): void {
     // 取消旧任务
     if (this.unregisterMonitor) {
       this.unregisterMonitor()
     }
 
     const interval = this.getNextCheckInterval()
+    this.scheduledInterval = interval
 
     // 注册新任务（使用固定的类型名称作为 owner）
     this.unregisterMonitor = this.scheduler.register({
       interval,
+      deferFirstRun,
       owner: 'flow-monitor', // 固定的类型名称
       priority: TaskPriority.HIGH,
       callback: () => this.performCheck(),
@@ -112,33 +138,15 @@ export class FlowMonitor {
   /**
    * 执行流状态检查
    */
-  private performCheck(): void {
-    if (!this.shouldCheck()) {
+  private async performCheck(): Promise<void> {
+    const pc = this.pc
+    if (!pc || pc.connectionState !== 'connected' || this.page?.hidden)
       return
-    }
 
-    this.checkFlowState().catch(() => {
-      // 忽略 getStats 错误，继续下次检查
-    })
-
-    // 重新调度（检查间隔可能变化）
-    if (this.shouldContinueMonitoring()) {
-      this.scheduleCheck()
-    }
-  }
-
-  /**
-   * 判断是否应该继续监控
-   */
-  private shouldContinueMonitoring(): boolean {
-    return !!(this.pc && this.pc.connectionState === 'connected')
-  }
-
-  /**
-   * 判断是否应该进行检查
-   */
-  private shouldCheck(): boolean {
-    return !!(this.pc && this.pc.connectionState === 'connected')
+    const generation = this.generation
+    await this.checkFlowState(pc, generation)
+    if (generation === this.generation && this.getNextCheckInterval() !== this.scheduledInterval)
+      this.scheduleCheck(true)
   }
 
   /**
@@ -152,64 +160,70 @@ export class FlowMonitor {
   /**
    * 检测流状态（通过接收字节数判断是否断流）
    */
-  private async checkFlowState(): Promise<void> {
-    const currentBytes = await this.getReceivedBytes()
-
-    // 首次检查时只记录初始值，不进行断流判定
-    if (this.isFirstCheck) {
-      this.lastBytesReceived = currentBytes
-      this.isFirstCheck = false
+  private async checkFlowState(pc: RTCPeerConnection, generation: number): Promise<void> {
+    const visibilityGeneration = this.visibilityGeneration
+    const startedAt = Date.now()
+    const measuredStart = performance.now()
+    let expired = false
+    // getStats 不可取消；超时后丢弃结果，但仍等原调用结算再采样。
+    const expire = (): void => {
+      if (expired || generation !== this.generation)
+        return
+      expired = true
+      this.reset()
+      if (visibilityGeneration === this.visibilityGeneration && pc.connectionState === 'connected')
+        this.options.onTimeout(pc, performance.now() - measuredStart)
+    }
+    const timeout = setTimeout(expire, this.baseInterval)
+    this.sampleTimeout = timeout
+    const currentBytes = await this.getReceivedBytes(pc)
+    clearTimeout(timeout)
+    if (generation !== this.generation)
+      return
+    this.sampleTimeout = undefined
+    if (expired || Date.now() - startedAt >= this.baseInterval) {
+      expire()
       return
     }
+    if (visibilityGeneration !== this.visibilityGeneration || pc.connectionState !== 'connected')
+      return
 
-    // 检测是否有数据增长
-    if (this.hasDataProgress(currentBytes)) {
-      this.consecutiveNoProgress = 0
-    }
-    else {
-      this.handleNoProgress()
-    }
+    const interval = this.scheduledInterval ?? this.baseInterval
+    const gap = this.lastSampleAt === undefined ? 0 : startedAt - this.lastSampleAt
+    // 长时间未采样时不延续休眠前的停滞计数。
+    if (gap < 0 || gap > interval * 4)
+      this.reset()
+    this.lastSampleAt = startedAt
 
-    // 更新上一次字节数
+    const previous = this.lastBytesReceived
     this.lastBytesReceived = currentBytes
+    if ([...currentBytes].some(([id, bytes]) => previous.has(id) && bytes > previous.get(id)!))
+      this.options.onProgress(pc)
+    // 报告增减或计数重置时重新建立基线，避免把不可比较的样本判为停滞。
+    if (currentBytes.size === 0 || currentBytes.size !== previous.size
+      || [...currentBytes].some(([id, bytes]) => previous.get(id) !== bytes)) {
+      this.consecutiveNoProgress = 0
+      return
+    }
+    this.handleNoProgress()
   }
 
-  /**
-   * 获取当前已接收的视频字节数
-   *
-   * 作为视频播放器，只监控视频流的数据传输状态。
-   */
-  private async getReceivedBytes(): Promise<number> {
-    if (!this.pc) {
-      return 0
-    }
-
+  private async getReceivedBytes(pc: RTCPeerConnection): Promise<Map<string, number>> {
+    const videoBytes = new Map<string, number>()
     try {
-      const stats = await this.pc.getStats()
-      let videoBytes = 0
-
+      const stats = await pc.getStats()
       stats.forEach((stat) => {
-        if (stat.type === 'inbound-rtp') {
-          const inboundRtp = stat as RTCInboundRtpStreamStats
-          // 只监控视频流
-          if (inboundRtp.kind === 'video' && inboundRtp.bytesReceived !== undefined) {
-            videoBytes = inboundRtp.bytesReceived
-          }
-        }
+        if (stat.type !== 'inbound-rtp')
+          return
+        const inbound = stat as RTCInboundRtpStreamStats
+        if (inbound.kind === 'video' && typeof inbound.bytesReceived === 'number' && Number.isFinite(inbound.bytesReceived) && inbound.bytesReceived >= 0)
+          videoBytes.set(inbound.id, inbound.bytesReceived)
       })
-
-      return videoBytes
     }
     catch {
-      return 0
+      videoBytes.clear()
     }
-  }
-
-  /**
-   * 判断是否有数据增长
-   */
-  private hasDataProgress(currentBytes: number): boolean {
-    return currentBytes > this.lastBytesReceived
+    return videoBytes
   }
 
   /**
@@ -228,7 +242,7 @@ export class FlowMonitor {
    * 触发断流停滞事件
    */
   private triggerStreamError(): void {
-    this.options.emitter.emit('flow:stalled', {
+    this.options.notify('flow:stalled', {
       reason: 'Stream interrupted: video flow stalled',
     })
   }

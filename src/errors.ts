@@ -3,6 +3,14 @@
  */
 export type ErrorType = string
 
+export type ErrorPhase = 'configuration' | 'signaling' | 'connection'
+
+interface WebRTCErrorOptions extends ErrorOptions {
+  phase?: ErrorPhase
+  reason?: 'setup-timeout'
+  httpStatus?: number
+}
+
 /**
  * 错误类型常量
  *
@@ -29,8 +37,18 @@ export const ErrorTypes = {
 export class WebRTCError extends Error {
   type: ErrorType
 
-  constructor(type: ErrorType, message: string, options?: ErrorOptions) {
+  declare readonly phase?: ErrorPhase
+  declare readonly reason?: 'setup-timeout'
+  declare readonly httpStatus?: number
+
+  constructor(type: ErrorType, message: string, options?: WebRTCErrorOptions) {
     super(message, options)
     this.type = type
+    if (options?.reason !== undefined)
+      this.reason = options.reason
+    if (options?.phase !== undefined)
+      this.phase = options.phase
+    if (options?.httpStatus !== undefined)
+      this.httpStatus = options.httpStatus
   }
 }
