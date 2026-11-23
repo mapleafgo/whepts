@@ -2,7 +2,7 @@
 
 > 本文保留时序与 CORS 的历史对照。当前实现和最终专项复验见 [A4 验收记录](2026-11-20-whepts-acceptance.md)：已分离的旧连接等待 DELETE 结算或 5 秒期限；ZLMediaKit 通过测试代理暴露 Location 的正对照和不暴露的负对照均已复验。
 
-范围：MediaMTX **v1.15.5**、ZLMediaKit **52c38f8**（镜像锁定见[验收记录：39](2026-11-20-whepts-acceptance.md#L39)）。清理验收要分别回答：浏览器是否发出 DELETE、HTTP 返回什么、服务端是否释放会话。本地关闭与这三项也应分别判断。
+范围：MediaMTX **v1.15.5**、ZLMediaKit **52c38f8**（镜像锁定见[验收记录](2026-11-20-whepts-acceptance.md)的双服务器实测记录）。清理验收要分别回答：浏览器是否发出 DELETE、HTTP 返回什么、服务端是否释放会话。本地关闭与这三项也应分别判断。
 
 ## 草案和 Fetch
 
@@ -17,9 +17,9 @@
 
 [服务端循环](https://github.com/bluenviron/mediamtx/blob/v1.15.5/internal/servers/webrtc/server.go#L370-L398) 的 `chCloseSession` 移除会话和 secret 索引；`chDeleteSession` 按 secret 查找并核对路径，命中则移除索引并调用 `Close()` 取消上下文。[runRead](https://github.com/bluenviron/mediamtx/blob/v1.15.5/internal/servers/webrtc/session.go#L376-L394) 监听 `pc.Failed()` 和会话取消，分别可返回 `peer connection closed` 和 `terminated`；[run](https://github.com/bluenviron/mediamtx/blob/v1.15.5/internal/servers/webrtc/session.go#L101-L111) 通知父服务并记录关闭原因。200 不是等待所有底层对象析构的屏障。
 
-**历史实测。** [验收记录：31–37](2026-11-20-whepts-acceptance.md#L31-L37)：Chrome 可读 Location/ETag；保持播放手动向同一 Location DELETE 得 200，随后播放器再次 DELETE 得 404。没有手动 DELETE 的双流对照中，本地关闭、解绑通过；播放器向已登记的地址发出的两次 DELETE 均为 404，服务端日志确认两会话因 PeerConnection 关闭回收；末次 404 发出 `delete-session` / `http-error` 诊断，播放器保持 `closed`。手动 200 不是播放器关闭验收。
+**历史实测。** [验收记录](2026-11-20-whepts-acceptance.md)的双服务器实测记录：Chrome 可读 Location/ETag；保持播放手动向同一 Location DELETE 得 200，随后播放器再次 DELETE 得 404。没有手动 DELETE 的双流对照中，本地关闭、解绑通过；播放器向已登记的地址发出的两次 DELETE 均为 404，服务端日志确认两会话因 PeerConnection 关闭回收；末次 404 发出 `delete-session` / `http-error` 诊断，播放器保持 `closed`。手动 200 不是播放器关闭验收。
 
-**本次补充实测。** 当前[清理顺序](../../src/whep.ts#L145-L180) 取出并清除旧会话，使用独立信号先发起 DELETE，随后同步关闭本地 PeerConnection，不等 HTTP。本次用[同一 Chrome 双流脚本](../../tests/browser-mediamtx.py) 补跑一次，切流和末次关闭各收到 DELETE 200，服务端两个会话均记录 `closed: terminated`。
+**本次补充实测。** 当前[清理顺序](../../src/whep.ts)（`cleanupSession` 与 `deleteSession`） 取出并清除旧会话，使用独立信号先发起 DELETE，随后同步关闭本地 PeerConnection，不等 HTTP。本次用[同一 Chrome 双流脚本](../../tests/browser-mediamtx.py) 补跑一次，切流和末次关闭各收到 DELETE 200，服务端两个会话均记录 `closed: terminated`。
 
 **推断。** 两组实测与源码共同支持关闭竞态：服务端先处理会话退出并移除索引，正确 DELETE 仍可能 404；DELETE 先命中则返回 200 并取消会话。404 单独不能证明原因，路径不匹配等也会 404；已有独立回收证据也不能把它归为 HTTP 成功。JS 先调用 Fetch 不保证网络到达或服务端处理先于传输关闭，一次双流 200 不能证明竞态消失。保留同步本地关闭、独立超时和非 2xx 诊断，不要等待 DELETE 才解绑或把 404 静默视作成功。
 
@@ -29,7 +29,7 @@
 
 [OPTIONS](https://github.com/ZLMediaKit/ZLMediaKit/blob/52c38f8/src/Http/HttpSession.cpp#L68-L89) 对允许的 Origin 回显 Origin 和请求头，方法列表含 DELETE、不含 PATCH；[实际响应公共 CORS 头](https://github.com/ZLMediaKit/ZLMediaKit/blob/52c38f8/src/Http/HttpSession.cpp#L799-L810) 不暴露 Location，创建处理器也没额外暴露或生成 ETag。
 
-**本仓实测。** [验收记录：39–57](2026-11-20-whepts-acceptance.md#L39-L57) 与 [Chrome 双流脚本](../../tests/browser-zlm.py)：使用正确监听端口 28091 和全量 ICE，两路均 OPTIONS 200、POST 201；原始响应有 Location，无 ETag 和 Expose-Headers，页面读不到 Location，未发 PATCH 或 DELETE。切流和本地关闭通过，服务端记录两个会话收到 DTLS close notify 后 transport shutdown，但未独立核对会话对象最终释放。此前端口 18091 的 POST 404 来自 llama.cpp，不是 ZLMediaKit 证据。真实跨源 307 播放通过，最终 Location 仍不可读。
+**本仓实测。** [验收记录](2026-11-20-whepts-acceptance.md) 与 [Chrome 双流脚本](../../tests/browser-zlm.py)：使用正确监听端口 28091 和全量 ICE，两路均 OPTIONS 200、POST 201；原始响应有 Location，无 ETag 和 Expose-Headers，页面读不到 Location，未发 PATCH 或 DELETE。切流和本地关闭通过，服务端记录两个会话收到 DTLS close notify 后 transport shutdown，但未独立核对会话对象最终释放。此前端口 18091 的 POST 404 来自 llama.cpp，不是 ZLMediaKit 证据。真实跨源 307 播放通过，最终 Location 仍不可读。
 
 **推断及部署方向。** 记录说明“浏览器没有发送 DELETE”，并非“服务端不支持 DELETE”或“清理已通过”。可对受信页面 Origin 在最终 201 明确暴露 Location，或用同源代理同时处理创建与删除路径。如果代理终止 TLS 或改写 Host，要确认 Location 的 scheme/host 是公开可达地址，必要时改写并原样保留编码查询串。不要把逐会话 token 或完整 Location 放进共享日志。暴露 Location 后还须验证目标 URL、预检、实际响应及服务端释放。
 
@@ -37,4 +37,4 @@
 
 1. **MediaMTX：**保留活会话手动 DELETE 对照，在冷预检缓存及不同 HTTP 延迟下反复比较先发 DELETE（不等待）与先关 PC；关联同一会话的浏览器预检/DELETE、HTTP 状态及服务端关闭原因。即使确认回收，404 仍记为 HTTP 非成功。
 2. **ZLMediaKit：**保留未暴露 Location 的负对照；再在同源或跨源暴露部署中用还在播放的自有会话验证实际路由，再用不同会话验证切流及关闭。分别记录页面可读地址、实际 DELETE 状态、服务端关闭原因和会话对象移除证据；OPTIONS、curl 200 或 transport shutdown 单独不算浏览器清理完成。
-3. **重定向：**[验收记录：57–59](2026-11-20-whepts-acceptance.md#L57-L59) 区分真实 ZLMediaKit 307 播放与 [Chrome 环回夹具](../../tests/browser-redirect.py) 的相对 Location、同/跨源 Bearer 边界和 DELETE 204。真正的服务端仍需补测最终可读的相对 Location、正确 DELETE 目标和回收证据。
+3. **重定向：**[验收记录](2026-11-20-whepts-acceptance.md) 区分真实 ZLMediaKit 307 播放与 [Chrome 环回夹具](../../tests/browser-redirect.py) 的相对 Location、同/跨源 Bearer 边界和 DELETE 204。真正的服务端仍需补测最终可读的相对 Location、正确 DELETE 目标和回收证据。

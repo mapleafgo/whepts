@@ -1,5 +1,7 @@
 # WHEP 的 Link 头与 HTTP 状态码：规范出处与分层结论
 
+> 过程记录：本文保留 Link 头与状态码的规范原文与方案比较；落实状态见 §3.4，最终验收见 [A4 验收记录](2026-11-20-whepts-acceptance.md)。
+
 > 范围：RFC 8288 / RFC 9110 / RFC 9725 / WHEP Internet-Draft / W3C WebRTC REC / Chromium 源码。
 > 目的：把「Link 头中 ICE 服务器的解析容错」和「WHEP 各方法状态码的判定」从二手描述拉回可核对的一手文本，并区分三类结论：
 >

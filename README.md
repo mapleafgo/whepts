@@ -89,6 +89,17 @@ ICE 重启（PATCH 返回 `200` + 新 `ETag`）受支持，后续候选使用新
 
 当前导出的 `ErrorTypes` 包含 `SIGNAL_ERROR`、`STATE_ERROR`、`REQUEST_ERROR`、`NOT_FOUND_ERROR`、`VIDEO_ERROR` 和 `OTHER_ERROR`。HTTP 失败统一使用 `REQUEST_ERROR`，具体状态码由 `httpStatus` 表达；草案 §4.1 要求播放器不把状态码映射到具体原因。`NOT_FOUND_ERROR` 仅为保持导出兼容而保留。
 
+## 诊断
+
+`onDiagnostic` 覆盖四类脱敏事件：`delete-session`（远端会话清理失败）、`sample-flow`（统计采样超时或被拒绝）、`trickle-ice`（候选 PATCH 超时或失败）、`listener-error`（事件监听器抛错）。字段含义见上表；`phase` 与 `elapsedMs` 只在有实际阶段和计时时出现，`cause` 只含错误名。诊断不会改变播放状态，也不会触发重连。
+
+## 当前限制
+
+- 只支持单个来源；切换来源须调用 `updateUrl()`，不会自动回退到备用流。
+- 服务端用反向 offer 时，播放器需要可读的 `Location` 才能提交应答。
+- 跨源部署未暴露 `Location` 时不发 DELETE，远端会话依赖服务端回收。
+- 已知未验证：其他浏览器、H.265 真机解码、真实服务端的反向 offer 流程。详见[验收记录](docs/plans/2026-11-20-whepts-acceptance.md)。
+
 ## 开发与验证
 
 ```bash

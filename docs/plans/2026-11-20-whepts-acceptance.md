@@ -4,10 +4,11 @@
 
 ## 当前基线（`main` @ 1.2.0-next.0）
 
-- `npm test`：75 项通过（含生产构建）。
+- `npm test`：91 项通过（含生产构建）。
 - `npm run lint`、`node_modules/.bin/tsc --noEmit`：通过。
 - `bash tests/package-smoke.sh`：实际 npm 包离线安装、ESM 入口、严格 NodeNext 与 Bundler 类型检查通过。
 - `python tests/browser-redirect.py`：Chrome 环回三项通过（同源、跨源且暴露 `Location`、跨源但未暴露 `Location`）。
+- `python tests/browser-visibility.py <whep-url>`：Chrome 视口内外挂载、解绑与恢复通过（MediaMTX 与 ZLMediaKit）。
 - 双服务器实测：Chrome + MediaMTX 1.15.5 与 ZLMediaKit `52c38f8` 的双流播放、切流、本地关闭通过；远端 HTTP 清理结论见 A4。
 
 上述命令都不启动媒体服务器；两台服务端的实测范围与限制见 A3、A4 与下方实测记录。
@@ -46,9 +47,11 @@
 
 **重定向。** 真实 Chrome 从同源 307 到 ZLMediaKit 收到 201 并播放，但最终 `Location` 未暴露，不覆盖重定向后的相对地址清理。[Chrome 环回夹具](../../tests/browser-redirect.py)补验三种场景：可读 `Location` 时只发一次 DELETE 并返回 204；不可读时不发 DELETE；均不发 PATCH，且失败只报告一次 `connection` 阶段错误。运行前需 `npm run build`，可用 `CHROME_BIN` 指定浏览器。
 
-**2026-11-23 当前提交（`ba4c308`）本机复验。** 两台服务端均按上述固定版本本机自启，使用同一生产构建：
+**2026-11-23 复验（`ba4c308`）。** 两台服务端均按上述固定版本本机自启，使用同一生产构建：
 
 - MediaMTX：`live` → `backup` 切流正常，两路 PATCH 204；严格模式下两次 DELETE 均 200，服务端两次 `closed: terminated`。
 - ZLMediaKit：经测试代理暴露 `Location` 后两次 DELETE 均 200，上游复查找不到传输；不暴露 `Location` 的负对照两路 POST 201、无 DELETE。播放 164 帧，暂停恢复与切流通过。
 
 两次运行使用相同合成 H.264 流与 Chrome 版本；结论仍限于本机部署。
+
+后续修复（元素重新接管、监听器异常隔离、候选 PATCH 超时）之后，`main` 上再次复验：MediaMTX 切流、严格 DELETE 与 Chrome 视口夹具均通过；新增回归覆盖监听器隔离（含 `off`/`context`/重复注册）、切源重新挂载、候选批次超时与归属。
