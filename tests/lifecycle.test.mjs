@@ -2328,6 +2328,60 @@ test('a reclaimed element is not detached by a pause triggered by visibility', a
   assert.equal(container.srcObject, stream)
 })
 
+test('a retired attempt PATCH failure is reported without touching the new session', async (t) => {
+  let peer
+  let rejectRetired
+  const diagnostics = []
+  Object.defineProperty(globalThis, 'RTCSessionDescription', { configurable: true, value: class {} })
+  t.after(() => Reflect.deleteProperty(globalThis, 'RTCSessionDescription'))
+  const sdp = 'v=0\r\na=ice-ufrag:session\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:0\r\na=ice-ufrag:media\r\n'
+  class Peer {
+    connectionState = 'connected'
+    addTransceiver() {}
+    async createOffer() {
+      if (this.ontrack)
+        peer = this
+      return { type: 'offer', sdp }
+    }
+
+    async setLocalDescription() {}
+    async setRemoteDescription() {}
+    close() {}
+  }
+  Object.defineProperty(globalThis, 'RTCPeerConnection', { configurable: true, value: Peer })
+  t.after(() => Reflect.deleteProperty(globalThis, 'RTCPeerConnection'))
+  let patched = 0
+  t.mock.method(globalThis, 'fetch', (url, { method }) => {
+    if (method === 'POST')
+      return Promise.resolve(new Response(sdp, { status: 201, headers: { Location: `${new URL(url).pathname}/session`, ETag: '"tag"' } }))
+    if (method === 'PATCH') {
+      patched++
+      if (patched === 1) {
+        return new Promise((_resolve, reject) => {
+          rejectRetired = () => reject(new TypeError('Private network detail'))
+        })
+      }
+      return Promise.resolve(new Response(null, { status: 204 }))
+    }
+    return Promise.resolve(new Response(null, { status: 204 }))
+  })
+  const player = new WebRTCWhep({
+    url: 'https://player.example/a',
+    container: { srcObject: null, addEventListener() {}, removeEventListener() {} },
+    lazyLoad: false,
+    onDiagnostic: record => diagnostics.push(record),
+  })
+  t.after(() => player.close())
+  await setImmediate()
+  peer.onicecandidate({ candidate: { sdpMid: '0', candidate: 'candidate:first' } })
+  await setImmediate()
+  player.updateUrl('https://player.example/b')
+  await setImmediate()
+  rejectRetired()
+  await setImmediate()
+  assert.equal(player.state, 'running')
+})
+
 test('a candidate PATCH failure is attributed to the attempt that sent it', async (t) => {
   let peer
   let failFirstPatch
