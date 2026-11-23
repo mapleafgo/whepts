@@ -18,8 +18,8 @@
 
 ### Imports
 
-- Use `~/` alias for imports from `src/` (e.g., `import X from '~/utils/observer'`)
-- Import types explicitly using `import type { T } from './module'`
+- Use `~/` alias for imports from `src/` (e.g., `import X from "~/utils/observer";`)
+- Import types explicitly using `import type { T } from "./module";`
 - Group external dependencies first, then internal imports
 
 ### Formatting
@@ -32,7 +32,7 @@
 
 - Strict mode enabled in `tsconfig.json`
 - Use `interface` for object shapes, `type` for unions/aliases
-- Mark optional properties with `?` (e.g., `onError?: (err: WebRTCError) => void`)
+- Mark optional properties with `?` (e.g., `onError?: (err: WebRTCError) => void;`)
 - Use TypeScript strictly - no `any` types
 
 ### Naming Conventions
@@ -48,7 +48,7 @@
 - Use custom `WebRTCError` class for all errors (defined in `src/errors.ts`)
 - Error types: `SIGNAL_ERROR`, `STATE_ERROR`, `REQUEST_ERROR`, `NOT_FOUND_ERROR`, `VIDEO_ERROR`, `OTHER_ERROR`
 - HTTP failures use `REQUEST_ERROR` and expose the code through `httpStatus`; never map statuses to specific causes
-- Pattern: `throw new WebRTCError(ErrorTypes.REQUEST_ERROR, 'Unexpected WHEP response status', { phase: 'signaling', httpStatus })`
+- Pattern: `throw new WebRTCError(ErrorTypes.REQUEST_ERROR, "Unexpected WHEP response status", { phase: "signaling", httpStatus });`
 - Route player-level failures through `failSetup()` / `notifyError()` so state and diagnostics stay consistent
 
 ### Comments
@@ -70,8 +70,8 @@
 **Critical Rule**: All event payload messages MUST be in English, code comments in Chinese
 
 - **Event payloads** (e.g., `reason`, error messages) → English only
-  - ✅ `emit('flow:stalled', { reason: 'Stream interrupted: video flow stalled' })`
-  - ❌ `emit('flow:stalled', { reason: '数据流中断：检测到视频流已停滞' })`
+  - ✅ `emit("flow:stalled", { reason: "Stream interrupted: video flow stalled" });`
+  - ❌ `emit("flow:stalled", { reason: "数据流中断：检测到视频流已停滞" });`
 
 - **Code comments** → Chinese for maintainability
   - ✅ `// 触发断流停滞事件`
@@ -85,15 +85,15 @@
 **Examples**:
 ```typescript
 // ❌ Wrong: Chinese in event payload
-this.emitter.emit('play:stalled', {
-  reason: '播放验证失败：媒体已暂停',  // Don't do this!
-})
+this.emitter.emit("play:stalled", {
+  reason: "播放验证失败：媒体已暂停",
+});
 
 // ✅ Correct: English in event payload, Chinese in comments
 // 播放停滞：媒体已暂停
-this.emitter.emit('play:stalled', {
-  reason: 'Playback verification failed: media is paused',
-})
+this.emitter.emit("play:stalled", {
+  reason: "Playback verification failed: media is paused",
+});
 ```
 
 ### File Organization
@@ -109,7 +109,7 @@ this.emitter.emit('play:stalled', {
 
 ### State Management
 
-- Use union literal types for state (e.g., `'getting_codecs' | 'running' | 'restarting' | 'closed' | 'failed'`)
+- Use union literal types for state (e.g., `"getting_codecs" | "running" | "restarting" | "closed" | "failed"`)
 - Always check state before operations that depend on it
 - Use getters for derived properties (e.g., `get isRunning()`)
 - `closed` is a final state - once entered, no further operations (except cleanup) are allowed
@@ -133,7 +133,7 @@ this.emitter.emit('play:stalled', {
 - `pass`: Basic auth password (optional)
 - `token`: Bearer token (optional)
 - `iceServers`: Custom ICE servers (optional)
-- `iceMode`: `'trickle'` (default) or `'complete'` (optional)
+- `iceMode`: `"trickle"` (default) or `"complete"` (optional)
 - `lazyLoad`: Enable auto pause/resume when off-screen (optional, default: true)
 - `onDiagnostic`: Optional callback for sanitized `delete-session` and `sample-flow` diagnostics
 

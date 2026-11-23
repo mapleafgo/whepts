@@ -11,25 +11,22 @@ npm i whepts
 页面提供 `<video id="video" playsinline></video>` 和 `<button id="resume" hidden>播放</button>`。
 
 ```typescript
-import WebRTCWhep from 'whepts'
+import WebRTCWhep from "whepts";
 
-const container = document.querySelector<HTMLVideoElement>('#video')
-const resume = document.querySelector<HTMLButtonElement>('#resume')
-if (!container || !resume)
-  throw new Error('Missing video or play button')
+const container = document.querySelector<HTMLVideoElement>("#video");
+const resume = document.querySelector<HTMLButtonElement>("#resume");
+if (!container || !resume) throw new Error("Missing video or play button");
 
-const player = new WebRTCWhep({ url: 'https://media.example.com/live/whep', container })
+const player = new WebRTCWhep({ url: "https://media.example.com/live/whep", container });
 
-player.on('play:failed', ({ code, reason }) => {
-  if (code === 'autoplay-blocked')
-    resume.hidden = false
-  else
-    console.warn(reason)
-})
-player.on('error', ({ type, phase, httpStatus, message }) => {
-  console.error(type, phase, httpStatus, message)
-})
-resume.addEventListener('click', () => player.resume())
+player.on("play:failed", ({ code, reason }) => {
+  if (code === "autoplay-blocked") resume.hidden = false;
+  else console.warn(reason);
+});
+player.on("error", ({ type, phase, httpStatus, message }) => {
+  console.error(type, phase, httpStatus, message);
+});
+resume.addEventListener("click", () => player.resume());
 ```
 
 页面或组件卸载时调用 `player.close()`，并移除调用方自己注册的 DOM 监听器。播放器不会自动静音；若希望静音播放，由调用方设置媒体元素。

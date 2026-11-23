@@ -99,7 +99,7 @@ WebRTCWhep uses nanostores for reactive state management:
 **Event Message Language Convention**:
 - Event payloads (`reason`, error messages, etc.) MUST be in English for API consistency
 - Code comments and documentation SHOULD be in Chinese for maintainability
-- Example: `emit('flow:stalled', { reason: 'Stream interrupted: video flow stalled' })` with Chinese comment `// 触发断流停滞事件`
+- Example: `emit("flow:stalled", { reason: "Stream interrupted: video flow stalled" });` with Chinese comment `// 触发断流停滞事件`
 
 ### Error Handling
 
