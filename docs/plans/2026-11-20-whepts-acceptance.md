@@ -45,3 +45,10 @@
 **排查记录。** 早期宿主网络对照的 POST 404 来自占用旧端口 18091 的其他服务（`Server: llama.cpp`），不属于 ZLMediaKit 证据；改用空闲端口 28091 后复验通过。容器端口映射下的 ICE 超时未再解释，以宿主网络结果为准。
 
 **重定向。** 真实 Chrome 从同源 307 到 ZLMediaKit 收到 201 并播放，但最终 `Location` 未暴露，不覆盖重定向后的相对地址清理。[Chrome 环回夹具](../../tests/browser-redirect.py)补验三种场景：可读 `Location` 时只发一次 DELETE 并返回 204；不可读时不发 DELETE；均不发 PATCH，且失败只报告一次 `connection` 阶段错误。运行前需 `npm run build`，可用 `CHROME_BIN` 指定浏览器。
+
+**2026-11-23 当前提交（`ba4c308`）本机复验。** 两台服务端均按上述固定版本本机自启，使用同一生产构建：
+
+- MediaMTX：`live` → `backup` 切流正常，两路 PATCH 204；严格模式下两次 DELETE 均 200，服务端两次 `closed: terminated`。
+- ZLMediaKit：经测试代理暴露 `Location` 后两次 DELETE 均 200，上游复查找不到传输；不暴露 `Location` 的负对照两路 POST 201、无 DELETE。播放 164 帧，暂停恢复与切流通过。
+
+两次运行使用相同合成 H.264 流与 Chrome 版本；结论仍限于本机部署。
