@@ -379,6 +379,10 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
     const wrapper = guarded as EventEmitter.EventListener<WhepEvents, K>
     const key = listener as object
     const byContext = this.guardedListeners.get(key) ?? new Map<unknown, (...values: unknown[]) => unknown>()
+    // 同一引用同一 context 只保留一个包装，避免旧包装失去簿记后无法移除。
+    const previous = byContext.get(context)
+    if (previous !== undefined)
+      super.removeListener(event, previous as EventEmitter.EventListener<WhepEvents, K>, context)
     byContext.set(context, guarded as (...values: unknown[]) => unknown)
     this.guardedListeners.set(key, byContext)
     return wrapper

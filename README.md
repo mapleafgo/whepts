@@ -66,6 +66,8 @@ resume.addEventListener('click', () => player.resume())
 - `state`：`getting_codecs`、`running`、`restarting`、`failed` 或 `closed`。`running` 表示已启动连接尝试，不代表连通或已出首帧。
 - `paused`：反映媒体元素当前是否没有挂载源，不是传输状态。
 
+候选 PATCH 失败或超过 5 秒未返回时，播放器只丢弃该批候选并通过 `onDiagnostic` 的 `trickle-ice` 上报，会话与播放不受影响；后续候选仍会继续发送。这是有意与部分服务端参考实现（失败即整会话重启）不同的取舍。
+
 ICE 重启（PATCH 返回 `200` + 新 `ETag`）受支持，后续候选使用新的实体标签。服务端用 `406 Not Acceptable` + `application/sdp` + 合法 offer 发反向 offer（草案 §4.3.2）时，播放器生成 answer 并用 `PATCH application/sdp` 提交，期望 `204`；其余 406 按 HTTP 错误处理。
 
 首次建连失败由调用方决定是否重试。已连通的传输明确失败后，播放器可有限重连同一来源；不会自动切备用流。流量和播放停滞仅通知，不触发重连。

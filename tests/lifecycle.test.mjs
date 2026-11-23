@@ -2091,6 +2091,29 @@ test('a throwing listener cannot stop later listeners of the same event', async 
   assert.ok(!JSON.stringify(diagnostics).includes('Private listener detail'))
 })
 
+test('re-registering the same listener keeps a single registration', async (t) => {
+  const player = new WebRTCWhep({
+    url: 'https://player.example/a',
+    container: { srcObject: null, addEventListener() {}, removeEventListener() {} },
+    lazyLoad: false,
+  })
+  t.after(() => player.close())
+  let calls = 0
+  const listener = () => {
+    calls++
+  }
+  player.on('state:change', listener)
+  player.on('state:change', listener)
+  assert.equal(player.listeners('state:change').length, 1)
+  await setImmediate()
+  const before = calls
+  player.off('state:change', listener)
+  assert.equal(player.listeners('state:change').length, 0)
+  player.updateUrl('https://player.example/b')
+  await setImmediate()
+  assert.equal(calls, before, 'removed listener must not run')
+})
+
 test('removing a listener keeps other registrations of the same function', async (t) => {
   const player = new WebRTCWhep({
     url: 'https://player.example/a',
