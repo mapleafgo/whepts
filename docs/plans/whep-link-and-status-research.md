@@ -424,25 +424,25 @@ for (const RTCIceServer* ice_server : configuration->iceServers()) {
 1. POST 的 **406** 只有在"带 `application/sdp` 且 SDP 可解析"时才走反向 offer，否则按普通 4xx 失败（§4.3.3【强制】）；
 2. ICE restart 的 PATCH 失败时**保留**原会话、不立即关闭（§4.5.3【强制】）。
 
-## 3.4 与当前实现的对照（仅事实记录，本文不改代码）
+## 3.4 落实状态
 
-| 位置 | 现状 | 与规范对照 |
-| --- | --- | --- |
-| src/utils/webrtc.ts:109 | `rel` 转小写后按空格拆分匹配 `ice-server` | 与 RFC 8288 §3.3 一致【符合强制】 |
-| src/utils/webrtc.ts:113 | 非 stun/turn 目标跳过该条 | 预过滤，【惯例】；与 Chromium 整体失败不同 |
-| src/utils/webrtc.ts:126 | 声明了 ice-server 但零可用 → 抛 `SIGNAL_ERROR` | 规范未要求，【惯例】；建议独立评估（见 §3.2 子问题） |
-| src/core/http.ts:53 | 用 **OPTIONS** 响应的 `Link` 取 ICE 服务器 | §4.8 只规定 201；OPTIONS 方案【允许】但服务端未必提供 |
-| src/core/http.ts:32 | 404 → `NOT_FOUND_ERROR`，其余非 2xx → `REQUEST_ERROR` | 与 §4.1 的"不按码定原因"存在张力 |
-| src/core/http.ts:83 | POST 只接受 201 | 与 §4.3.1 一致；但**未处理 406 反向 offer**，会直接判失败 |
-| src/core/http.ts:125 | PATCH 只接受 204 | 与 §4.3.2 一致；但 §4.5.3 的 ICE restart 成功是 **200 + 新 ETag**，会被误判为失败 |
-| src/core/http.ts:106 | DELETE 接受任意 `ok` | 与"草案未规定 DELETE 成功码"相容 |
+本节记录调研结论落地后的实现状态；细节与实测见[验收记录](2026-11-20-whepts-acceptance.md)。
 
-## 3.5 未决事项
+| 事项 | 现状 |
+| --- | --- |
+| `rel` 大小写不敏感、可含多个值 | 按 RFC 8288 §3.3 解析 |
+| 非 stun/turn 目标 | 跳过该条（`anchor` 链接与缺凭据 TURN 同样跳过）；声明 `ice-server` 但零可用才失败 |
+| ICE 服务器来源 | 仍用 OPTIONS 响应的 `Link`；草案只规定 201，OPTIONS 属部署约定 |
+| 状态码映射 | 统一 `REQUEST_ERROR` + `httpStatus`，不按码定具体原因 |
+| POST 201 | 接受；`406` + `application/sdp` + 合法 offer 走反向 offer，其余按 HTTP 错误 |
+| PATCH | 接受 `204` 与 ICE restart 的 `200`（并轮换 `ETag`） |
+| DELETE | 接受任意成功状态；`404` 仍在诊断中报告 |
 
-1. **"MATCH" 的身份**：需上游确认所指文档。若确为内部规范或未公开草案，应补正式引用后再评估（目前按"不存在"处理）。
-2. **OPTIONS 还是 201 取 ICE 服务器**：草案只规范 201；采用 OPTIONS 需服务端配合，属部署约定【允许】。已有实现文档需与此对齐。
-3. **"声明但零可用"是否硬失败**：见 §3.2，建议独立决策。
+## 3.5 遗留问题
 
+1. **“MATCH” 的身份**：仓库内未找到对应规范；按“不存在”处理。
+2. **OPTIONS 取 ICE 服务器**：草案只规范 201，采用 OPTIONS 属部署约定。
+3. **反向 offer 实测**：MediaMTX 与 ZLMediaKit 都不发反向 offer，该流程仅由模拟回归覆盖。
 ---
 
 ## 附：一手来源清单

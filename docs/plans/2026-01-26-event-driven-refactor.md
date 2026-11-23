@@ -1,5 +1,7 @@
 # Event-Driven Architecture Refactor Implementation Plan
 
+> 历史记录：这是 2026-01 的重构实施计划，已被[架构改造方案](2026-11-20-whepts-architecture-design.md)取代。保留原文仅作过程记录。
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Refactor WebRTCWhep from callback-based to event-driven architecture using EventEmitter and nanostores.

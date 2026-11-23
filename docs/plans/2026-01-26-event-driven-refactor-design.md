@@ -1,7 +1,7 @@
 # Event-Driven Architecture Refactor Design
 
 **Date**: 2026-01-26
-**Status**: Draft
+**Status**: 历史记录（已被[架构改造方案](2026-11-20-whepts-architecture-design.md)取代）
 **Author**: Claude Code
 
 ## Overview

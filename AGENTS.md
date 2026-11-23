@@ -7,7 +7,10 @@
 - `npm run lint` - Run ESLint to check code quality
 - `npm run lint:fix` - Auto-fix ESLint issues
 
-**Note**: No test framework is currently configured.
+- `npm test` - Build the production bundle and run the Node regression suite
+- `node_modules/.bin/tsc --noEmit` - Type-check without emitting
+
+回归用例位于 `tests/lifecycle.test.mjs`，浏览器夹具见 `tests/browser-*.py` 与 `tests/package-smoke.sh`。
 
 ## Code Style Guidelines
 
@@ -41,9 +44,10 @@
 ### Error Handling
 
 - Use custom `WebRTCError` class for all errors (defined in `src/errors.ts`)
-- Error types: `SIGNAL_ERROR`, `NOT_FOUND_ERROR`, `REQUEST_ERROR`, `NETWORK_ERROR`, `MEDIA_ERROR`, `OTHER_ERROR`
-- Pattern: `throw new WebRTCError(ErrorTypes.NETWORK_ERROR, 'message')`
-- Call `this.handleError(err)` for centralized error management
+- Error types: `SIGNAL_ERROR`, `STATE_ERROR`, `REQUEST_ERROR`, `NOT_FOUND_ERROR`, `VIDEO_ERROR`, `OTHER_ERROR`
+- HTTP failures use `REQUEST_ERROR` and expose the code through `httpStatus`; never map statuses to specific causes
+- Pattern: `throw new WebRTCError(ErrorTypes.REQUEST_ERROR, 'Unexpected WHEP response status', { phase: 'signaling', httpStatus })`
+- Route player-level failures through `failSetup()` / `notifyError()` so state and diagnostics stay consistent
 
 ### Comments
 
@@ -127,7 +131,9 @@ this.emitter.emit('play:stalled', {
 - `pass`: Basic auth password (optional)
 - `token`: Bearer token (optional)
 - `iceServers`: Custom ICE servers (optional)
+- `iceMode`: `'trickle'` (default) or `'complete'` (optional)
 - `lazyLoad`: Enable auto pause/resume when off-screen (optional, default: true)
+- `onDiagnostic`: Optional callback for sanitized `delete-session` and `sample-flow` diagnostics
 
 ### WebRTC Specifics
 
@@ -159,12 +165,10 @@ this.emitter.emit('play:stalled', {
 
 ### Debug Logging
 
-- Use `console.warn()` for important state transitions and diagnostics
-- Log stream composition when tracks are received (audio/video check)
-- Log video element state when playing (paused, srcObject, readyState, dimensions)
-- Log track mute/unmute events to diagnose codec issues
-- Log recovery attempts for video element crashes
-- Format logs with prefixes like `[TrackManager]`, `[PlayMonitor]` for easy filtering
+- Production build strips all console output (`rollup.config.ts`); do not rely on logs for user-facing diagnosis
+- `npm run build:debug` keeps source maps and logging; `state:change` uses `console.debug` and requires Verbose in DevTools
+- `console.warn` reports player errors and diagnostics; never log credentials, session URLs, SDP, ICE credentials or candidates
+- Debug bundles prefix logs with `[WhepTS]`; keep new diagnostics on the same public `onDiagnostic` contract
 
 ## Tech Stack
 
@@ -177,4 +181,4 @@ this.emitter.emit('play:stalled', {
 
 1. Run `npm run lint` and fix all issues
 2. Build with `npm run build` to verify production build works
-3. No test framework - manually verify WebRTC functionality
+3. Run `npm test` and `node_modules/.bin/tsc --noEmit`; browser interoperability still needs the fixtures under `tests/`

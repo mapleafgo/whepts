@@ -75,7 +75,7 @@ WebRTCWhep uses nanostores for reactive state management:
 - **Available States**:
   - `getting_codecs` - Initial state during codec detection
   - `running` - Normal operation
-  - `restarting` - Recovering from errors, will retry after 2s
+  - `restarting` - A same-source retry has been scheduled (delays 2s, 4s, 8s)
   - `closed` - Explicitly closed (via `close()` method)
   - `failed` - Permanent failure (signal errors, 404/406, bad requests)
 
@@ -105,17 +105,18 @@ WebRTCWhep uses nanostores for reactive state management:
 All errors go through `WebRTCWhep.handleError()` and are emitted via the `error` event:
 
 **Error Types** (defined in `ErrorTypes`):
-- `SIGNAL_ERROR` - Signaling errors
-- `NOT_FOUND_ERROR` - Resource not found (404)
-- `REQUEST_ERROR` - Bad requests (400, 406)
-- `NETWORK_ERROR` - Network-related errors
-- `MEDIA_ERROR` - Media-related errors
-- `OTHER_ERROR` - Other errors
+- `SIGNAL_ERROR` - Signaling and offer/answer failures
+- `STATE_ERROR` - Operation rejected by the current state
+- `REQUEST_ERROR` - Any unexpected HTTP response; read `httpStatus` for the code
+- `NOT_FOUND_ERROR` - Exported for compatibility only; not produced
+- `VIDEO_ERROR` - Media element failures
+- `OTHER_ERROR` - Failures that are not `WebRTCError`
 
 **Error State Transitions**:
-- Signal/NotFound/Request errors → `failed` state
-- Network/Media/Other errors while `running` → cleanup session, `restarting` state, retry after 2s
-- All errors emitted via `error` event for users to handle
+- Any failure before the first successful connection → cleanup, `failed`, one error report, no automatic retry
+- A connected transport that later fails → cleanup, `restarting`, bounded same-source retries; budget exhaustion → `failed`
+- HTTP failures stay `REQUEST_ERROR` and carry `httpStatus`; statuses are never mapped to specific causes
+- All errors are emitted through the `error` event
 
 ### Public API Methods
 
@@ -130,12 +131,11 @@ All errors go through `WebRTCWhep.handleError()` and are emitted via the `error`
 
 ### Private Helper Methods
 
-- **`cleanupSession()`** - Centralized session cleanup logic (reused by `handleError()` and `updateUrl()`):
-  - Closes the RTCPeerConnection
-  - Closes flow monitoring
-  - Clears queued ICE candidates
-  - Sends DELETE request to server to terminate session
-  - Clears the stored session URL
+- **`cleanupSession()`** - Centralized session cleanup (used by `failSetup()`, reconnect and `updateUrl()`):
+  - Aborts the current attempt and clears its deadline
+  - Detaches the PeerConnection so the caller owns disposal
+  - Stops media and clears queued ICE candidates
+  - Sends one bounded DELETE for the registered session (best effort)
 
 ### WebRTC Specifics
 
@@ -145,10 +145,10 @@ All errors go through `WebRTCWhep.handleError()` and are emitted via the `error`
   - Audio: `pcma/8000/2` (G.711 A-law), `multiopus/48000/6` (6-channel Opus), `L16/48000/2` (Linear PCM)
   - Video: `video/H265` (HEVC), `video/VP9`, `video/AV1`
 - Codec detection happens automatically at startup, emits `codecs:detected` event
-- Video stream validation: automatically rejects audio-only streams with `OTHER_ERROR`
+- Video stream validation: a stream without video reports `play:failed` with `video-unavailable`
 - Video element crash recovery: automatic recovery with max 3 attempts, 1 second delay between attempts
 - Use `IntersectionObserver` for visibility-based playback control (threshold: 50%)
-- FlowCheck monitors `RTCInboundRtpStreamStats.bytesReceived` for stream health
+- `FlowMonitor` samples `RTCInboundRtpStreamStats.bytesReceived`; stalls only notify, they never trigger a reconnect
 
 ### Resource Management Lifecycle
 
