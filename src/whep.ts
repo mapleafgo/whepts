@@ -92,7 +92,7 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
     }, (pc, errorName) => {
       const attempt = this.attempt
       if (attempt && this.state === 'running' && this.connectionManager.getPeerConnection() === pc)
-        this.notifyDiagnostic({ operation: 'sample-flow', phase: 'connection', elapsedMs: 0, reason: 'request-failed', cause: errorName }, attempt.id)
+        this.notifyDiagnostic({ operation: 'sample-flow', phase: 'connection', reason: 'request-failed', cause: errorName }, attempt.id)
     })
 
     this.httpClient = new HttpClient({
