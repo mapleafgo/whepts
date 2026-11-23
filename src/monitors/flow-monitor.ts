@@ -20,6 +20,7 @@ export interface FlowMonitorOptions {
   /** 事件发射器 */
   notify: MediaNotifier
   onTimeout: (pc: RTCPeerConnection, elapsedMs: number) => void
+  onSampleFailed: (pc: RTCPeerConnection, errorName: string) => void
   onProgress: (pc: RTCPeerConnection) => void
 }
 
@@ -176,7 +177,7 @@ export class FlowMonitor {
     }
     const timeout = setTimeout(expire, this.baseInterval)
     this.sampleTimeout = timeout
-    const currentBytes = await this.getReceivedBytes(pc)
+    const { bytes: currentBytes, errorName } = await this.getReceivedBytes(pc)
     clearTimeout(timeout)
     if (generation !== this.generation)
       return
@@ -185,7 +186,16 @@ export class FlowMonitor {
       expire()
       return
     }
-    if (visibilityGeneration !== this.visibilityGeneration || pc.connectionState !== 'connected')
+    if (visibilityGeneration !== this.visibilityGeneration)
+      return
+    // 统计失败不等于断流，也不能当作空样本；上报后等下一次采样重建基线。
+    if (errorName !== undefined) {
+      this.reset()
+      if (pc.connectionState === 'connected')
+        this.options.onSampleFailed(pc, errorName)
+      return
+    }
+    if (pc.connectionState !== 'connected')
       return
 
     const interval = this.scheduledInterval ?? this.baseInterval
@@ -208,7 +218,7 @@ export class FlowMonitor {
     this.handleNoProgress()
   }
 
-  private async getReceivedBytes(pc: RTCPeerConnection): Promise<Map<string, number>> {
+  private async getReceivedBytes(pc: RTCPeerConnection): Promise<{ bytes: Map<string, number>, errorName?: string }> {
     const videoBytes = new Map<string, number>()
     try {
       const stats = await pc.getStats()
@@ -220,10 +230,11 @@ export class FlowMonitor {
           videoBytes.set(inbound.id, inbound.bytesReceived)
       })
     }
-    catch {
+    catch (error) {
       videoBytes.clear()
+      return { bytes: videoBytes, errorName: error instanceof Error ? error.name : 'unknown' }
     }
-    return videoBytes
+    return { bytes: videoBytes }
   }
 
   /**

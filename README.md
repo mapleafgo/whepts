@@ -45,7 +45,7 @@ resume.addEventListener('click', () => player.resume())
 | `iceServers` | 可选 ICE 服务器；非空列表替代 OPTIONS 发现。 |
 | `iceMode` | 默认 `trickle`；`complete` 等待 ICE 收集完成后发送完整 offer，不发候选 PATCH。适用于不支持 Trickle ICE 的部署。 |
 | `lazyLoad` | 默认 `true`。至少 50% 可见才挂载播放，隐藏时保持传输。 |
-| `onDiagnostic` | 可选回调，接收远端会话清理失败（`delete-session`）或流量采样超时（`sample-flow`）的 `WhepDiagnostic`。包含 `playerId`、诊断发出时的 `state`、`operation`、`phase`、`reason`、`elapsedMs`。有归属的连接尝试时提供 `attemptId`，有 HTTP 响应时提供 `httpStatus`。不含会话 URL、凭据或响应正文，也不会触发重连。 |
+| `onDiagnostic` | 可选回调，接收远端会话清理失败（`delete-session`）或流量采样异常（`sample-flow`，原因为 `timeout` 或 `request-failed`）的 `WhepDiagnostic`。`cause` 仅含脱敏错误名。包含 `playerId`、诊断发出时的 `state`、`operation`、`phase`、`reason`、`elapsedMs`。有归属的连接尝试时提供 `attemptId`，有 HTTP 响应时提供 `httpStatus`。不含会话 URL、凭据或响应正文，也不会触发重连。 |
 
 ## 浏览器兼容性
 
@@ -56,7 +56,7 @@ resume.addEventListener('click', () => player.resume())
 - **MediaMTX**：端点形如 `http://localhost:8889/live/whep`，使用默认的 `trickle`。
 - **ZLMediaKit**：端点形如 `https://media.example.com/index/api/whep?app=live&stream=camera`，不支持 Trickle ICE 的部署使用 `iceMode: 'complete'`。
 
-跨域部署须允许实际用到的方法和请求头，并在最终 POST 响应中暴露 `Location`（Trickle ICE 如使用 `ETag`，也应暴露）。会话地址本身也须允许跨域 DELETE。缺少可读地址时，播放器不猜测 PATCH 或 DELETE 的目标。部署对照及实测范围见[验收记录](docs/plans/2026-11-20-whepts-acceptance.md)。
+跨域部署须允许实际用到的方法和请求头，并在最终 POST 响应中暴露 `Location`（Trickle ICE 如使用 `ETag`，也应暴露）。会话地址本身也须允许跨域 DELETE。缺少可读地址时，播放器不猜测 PATCH 或 DELETE 的目标。`Link` 的 ICE 服务器按 RFC 8288 逐条解析：不可用地址、带 `anchor` 且无法重设锚点的链接、缺 `username`/`credential` 的 TURN 地址都会被跳过（Chromium 遇到这些会整体失败）。只有当响应声明了 ICE 服务器却一条可用都没有时才报告建连失败。部署对照及实测范围见[验收记录](docs/plans/2026-11-20-whepts-acceptance.md)。
 
 ## 播放控制与状态
 
@@ -65,6 +65,8 @@ resume.addEventListener('click', () => player.resume())
 - `close()`：终态，重复调用无额外副作用。立即停止播放并解绑媒体，不等待远端确认。已登记会话时，后台发送一次 DELETE，旧 PeerConnection 在请求结束或 5 秒期限到达时关闭；无会话地址则立即关闭连接。
 - `state`：`getting_codecs`、`running`、`restarting`、`failed` 或 `closed`。`running` 表示已启动连接尝试，不代表连通或已出首帧。
 - `paused`：反映媒体元素当前是否没有挂载源，不是传输状态。
+
+ICE 重启（PATCH 返回 `200` + 新 `ETag`）受支持，后续候选使用新的实体标签。服务端用 `406 Not Acceptable` + `application/sdp` + 合法 offer 发反向 offer（草案 §4.3.2）时，播放器生成 answer 并用 `PATCH application/sdp` 提交，期望 `204`；其余 406 按 HTTP 错误处理。
 
 首次建连失败由调用方决定是否重试。已连通的传输明确失败后，播放器可有限重连同一来源；不会自动切备用流。流量和播放停滞仅通知，不触发重连。
 
@@ -81,7 +83,7 @@ resume.addEventListener('click', () => player.resume())
 | `error` | `WebRTCError`，使用 `type` 分类；`phase` 和 `httpStatus` 在适用时提供；建连超时带有 `reason: 'setup-timeout'`。 |
 | `restart`、`close` | 已安排同源重连、本地关闭完成。 |
 
-当前导出的 `ErrorTypes` 包含 `SIGNAL_ERROR`、`STATE_ERROR`、`REQUEST_ERROR`、`NOT_FOUND_ERROR`、`VIDEO_ERROR` 和 `OTHER_ERROR`。
+当前导出的 `ErrorTypes` 包含 `SIGNAL_ERROR`、`STATE_ERROR`、`REQUEST_ERROR`、`NOT_FOUND_ERROR`、`VIDEO_ERROR` 和 `OTHER_ERROR`。HTTP 失败统一使用 `REQUEST_ERROR`，具体状态码由 `httpStatus` 表达；草案 §4.1 要求播放器不把状态码映射到具体原因。`NOT_FOUND_ERROR` 仅为保持导出兼容而保留。
 
 ## 开发与验证
 

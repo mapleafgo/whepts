@@ -115,6 +115,26 @@ export class ConnectionManager {
     )
   }
 
+  /** Apply a server counter-offer, adopt the answer scope, and return the answer SDP. */
+  async answerCounterOffer(counterOffer: string, signal: AbortSignal): Promise<string> {
+    if (this.options.getState() !== 'running' || !this.pc)
+      throw new WebRTCError(ErrorTypes.STATE_ERROR, 'closed')
+
+    const pc = this.pc
+    await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: counterOffer }))
+    signal.throwIfAborted()
+    const answer = await pc.createAnswer()
+    signal.throwIfAborted()
+    if (!answer.sdp)
+      throw new WebRTCError(ErrorTypes.SIGNAL_ERROR, 'Failed to create answer SDP')
+    await pc.setLocalDescription(answer)
+    signal.throwIfAborted()
+    const sdp = pc.localDescription?.sdp ?? answer.sdp
+    // 反向 offer 之后，候选片段必须按新的本地 SDP 作用域生成。
+    this.offerData = SdpUtils.parseOffer(sdp)
+    return sdp
+  }
+
   getPeerConnection(): RTCPeerConnection | undefined {
     return this.pc
   }

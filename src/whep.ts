@@ -21,6 +21,19 @@ const RECONNECT_DELAYS_MS = [2000, 4000, 8000] as const
 
 let nextPlayerId = 0
 
+/** Keep only a stable error kind; raw messages may contain server internals. */
+function sanitizeCause(error: unknown): string | undefined {
+  if (error instanceof WebRTCError)
+    return undefined
+  const name = error instanceof Error ? error.name : undefined
+  return name === undefined || name === 'Error' ? undefined : name
+}
+
+/** Distinguish our own cleanup deadline from any other abort cause. */
+function isTimeoutReason(reason: unknown): boolean {
+  return reason instanceof DOMException && reason.name === 'TimeoutError'
+}
+
 function validateEndpoint(url: string): string {
   const endpoint = URL.canParse(url) ? new URL(url) : undefined
   if (!endpoint || !['http:', 'https:'].includes(endpoint.protocol) || endpoint.username || endpoint.password)
@@ -74,6 +87,10 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
       const attempt = this.attempt
       if (attempt && this.state === 'running' && this.connectionManager.getPeerConnection() === pc)
         this.notifyDiagnostic({ operation: 'sample-flow', phase: 'connection', elapsedMs, reason: 'timeout' }, attempt.id)
+    }, (pc, errorName) => {
+      const attempt = this.attempt
+      if (attempt && this.state === 'running' && this.connectionManager.getPeerConnection() === pc)
+        this.notifyDiagnostic({ operation: 'sample-flow', phase: 'connection', elapsedMs: 0, reason: 'request-failed', cause: errorName }, attempt.id)
     })
 
     this.httpClient = new HttpClient({
@@ -97,7 +114,8 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
       disconnectGraceMs: DISCONNECT_GRACE_MS,
       onConnected: () => {
         this.clearConnectionDeadline()
-        this.trackManager.waitForVideo(VIDEO_TRACK_WAIT_MS)
+        if (this.state === 'running')
+          this.trackManager.waitForVideo(VIDEO_TRACK_WAIT_MS)
       },
       onTransportFailure: (connected) => {
         if (connected)
@@ -109,7 +127,11 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
 
     this.codecDetector = new CodecDetector(CODEC_PROBE_TIMEOUT_MS)
 
-    void this.codecDetector.detect().then(codecs => this.handleCodecsDetected(codecs))
+    this.codecDetector.detect().then(codecs => this.handleCodecsDetected(codecs)).catch((error: unknown) => {
+      // 探测失败不阻断播放：按未检测到扩展编解码器继续。
+      console.warn('[WhepTS] Codec detection failed', { playerId: this.playerId, error: error instanceof Error ? error.name : 'unknown' })
+      this.handleCodecsDetected([])
+    })
   }
 
   get state(): State {
@@ -124,11 +146,20 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
     const from = this.state
     this.stateStore.set('closed')
     this.codecDetector.stop()
-    this.cleanupSession()
-    this.trackManager.destroy() // 永久销毁
-    this.scheduler.destroy() // 销毁调度器
-    this.notifyStateChange(from, 'closed')
-    this.notify('close')
+    try {
+      this.cleanupSession()
+    }
+    finally {
+      // 本地清理失败也不能让终态通知缺失。
+      try {
+        this.trackManager.destroy()
+        this.scheduler.destroy()
+      }
+      finally {
+        this.notifyStateChange(from, 'closed')
+        this.notify('close')
+      }
+    }
   }
 
   private transition(to: State): void {
@@ -186,7 +217,7 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
         operation: 'delete-session',
         phase: 'signaling',
         elapsedMs: performance.now() - startedAt,
-        reason: httpStatus !== undefined ? 'http-error' : signal.aborted ? 'timeout' : 'request-failed',
+        reason: httpStatus !== undefined ? 'http-error' : isTimeoutReason(signal.reason) ? 'timeout' : 'request-failed',
         ...(httpStatus !== undefined ? { httpStatus } : {}),
       }, attemptId)
     }).finally(closePeer)
@@ -209,6 +240,8 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
   }
 
   private handleTransportFailure(): void {
+    // 传输已失效：不留下仍能向元素报告成功的旧恢复流程。
+    this.trackManager.invalidateMediaRecovery()
     if (this.state !== 'running')
       return
 
@@ -275,7 +308,7 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
       const offer = await this.connectionManager.setupPeerConnection(iceServers, signal, this.conf.iceMode === 'complete')
       signal.throwIfAborted()
       progress.phase = 'signaling'
-      const answer = await this.httpClient.sendOffer(offer, signal, (session) => {
+      const result = await this.httpClient.sendOffer(offer, signal, (session) => {
         if (signal.aborted) {
           if (session)
             this.deleteSession(session, attempt.id)
@@ -287,7 +320,11 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
       })
       signal.throwIfAborted()
       progress.phase = 'connection'
-      await this.handleOfferResponse(answer, signal)
+      if ('counterOffer' in result) {
+        await this.answerCounterOffer(result, signal)
+        return
+      }
+      await this.handleOfferResponse(result.answer, signal)
     }
     catch (error) {
       if (!signal.aborted)
@@ -301,10 +338,11 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
     if (this.state !== 'failed')
       return
 
-    const type = error instanceof WebRTCError ? error.type : ErrorTypes.SIGNAL_ERROR
+    const type = error instanceof WebRTCError ? error.type : ErrorTypes.OTHER_ERROR
     const message = reason === 'setup-timeout' ? 'WHEP connection attempt timed out' : phase === 'signaling' ? 'WHEP signaling failed' : 'Peer connection failed'
     const httpStatus = error instanceof WebRTCError ? error.httpStatus : undefined
-    this.notifyError(new WebRTCError(type, message, { phase, httpStatus, reason }))
+    const cause = sanitizeCause(error)
+    this.notifyError(new WebRTCError(type, message, { phase, httpStatus, reason, ...(cause === undefined ? {} : { cause }) }))
   }
 
   private notify<K extends keyof WhepEvents>(event: K, ...args: EventEmitter.EventArgs<WhepEvents, K>): void {
@@ -319,6 +357,23 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
   private notifyError(error: WebRTCError): void {
     console.warn('[WhepTS] Player error', { playerId: this.playerId, state: this.state, type: error.type, phase: error.phase, reason: error.reason, httpStatus: error.httpStatus })
     this.notify('error', error)
+  }
+
+  private async answerCounterOffer(offer: { counterOffer: string, expiresAt: number }, signal: AbortSignal): Promise<void> {
+    const session = this.session
+    // 反向 offer 只有在 Location 可用时才能提交应答。
+    if (!session)
+      throw new WebRTCError(ErrorTypes.REQUEST_ERROR, 'Counter-offer without a session URL', { phase: 'signaling', httpStatus: 406 })
+    // 超出有效期的反向 offer 不再应答。
+    if (Date.now() > offer.expiresAt)
+      throw new WebRTCError(ErrorTypes.SIGNAL_ERROR, 'Counter-offer expired before answering', { phase: 'signaling' })
+    const answer = await this.connectionManager.answerCounterOffer(offer.counterOffer, signal)
+    signal.throwIfAborted()
+    this.answerApplied = true
+    await this.httpClient.sendAnswer(session, answer, signal)
+    signal.throwIfAborted()
+    if (this.session === session)
+      void this.flushCandidates(signal)
   }
 
   private handleOfferResponse(answer: string, signal: AbortSignal): Promise<void> {
@@ -339,7 +394,7 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
   }
 
   private async flushCandidates(signal: AbortSignal): Promise<void> {
-    if (!this.answerApplied || this.candidateDrain === signal || !this.session || this.queuedCandidates.length === 0)
+    if (this.state !== 'running' || !this.answerApplied || this.candidateDrain === signal || !this.session || this.queuedCandidates.length === 0)
       return
 
     const offer = this.connectionManager.getOfferData()
@@ -352,7 +407,9 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
       while (!signal.aborted && this.queuedCandidates.length !== 0) {
         const batch = this.queuedCandidates
         this.queuedCandidates = []
-        await this.httpClient.sendLocalCandidates(session, offer, batch, signal)
+        const rotatedTag = await this.httpClient.sendLocalCandidates(session, offer, batch, signal)
+        if (rotatedTag !== null && this.session === session)
+          session.etag = rotatedTag
       }
     }
     catch (error) {
@@ -391,7 +448,7 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
   updateUrl(url: string): void {
     // Cannot update URL if already closed
     if (this.state === 'closed') {
-      this.notify('error', new WebRTCError(ErrorTypes.STATE_ERROR, 'Cannot update URL: instance is closed'))
+      this.notifyError(new WebRTCError(ErrorTypes.STATE_ERROR, 'Cannot update URL: instance is closed'))
       return
     }
 
@@ -402,7 +459,7 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
     catch (error) {
       if (!(error instanceof WebRTCError))
         throw error
-      this.notify('error', error)
+      this.notifyError(error)
       return
     }
 

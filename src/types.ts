@@ -35,6 +35,8 @@ export interface WhepDiagnostic {
   elapsedMs: number
   reason: 'http-error' | 'timeout' | 'request-failed'
   httpStatus?: number
+  /** Sanitized error name or HTTP context; never raw messages or payloads. */
+  cause?: string
 }
 
 /**

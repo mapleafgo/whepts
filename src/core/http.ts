@@ -15,6 +15,15 @@ export interface HttpClientOptions {
   getState: () => State
 }
 
+const DEFAULT_COUNTER_OFFER_LIFETIME_MS = 30000
+
+/** Read the Content-Type valid-until parameter, defaulting to 30 seconds from now. */
+function readValidUntil(contentType: string): number {
+  const match = /;\s*valid-until\s*=\s*"?([^";]+)"?/i.exec(contentType)
+  const parsed = match ? Date.parse(match[1]) : Number.NaN
+  return Number.isNaN(parsed) ? Date.now() + DEFAULT_COUNTER_OFFER_LIFETIME_MS : parsed
+}
+
 export class HttpClient {
   private readonly credentialOrigin: string | undefined
 
@@ -28,12 +37,31 @@ export class HttpClient {
 
     // 响应正文可能包含服务端内部信息，不作为公开错误来源。
     void response.body?.cancel().catch(() => {})
-    const { status } = response
-    const type = status === 404 ? ErrorTypes.NOT_FOUND_ERROR : ErrorTypes.REQUEST_ERROR
-    throw new WebRTCError(type, 'Unexpected WHEP response status', {
+    throw this.statusError(response.status)
+  }
+
+  /** Map any unexpected status to the generic request failure; callers read httpStatus. */
+  private statusError(status: number): WebRTCError {
+    // 草案 §4.1：不得把状态码映射到具体原因，统一交由 httpStatus 表达。
+    return new WebRTCError(ErrorTypes.REQUEST_ERROR, 'Unexpected WHEP response status', {
       phase: 'signaling',
       ...(status > 0 ? { httpStatus: status } : {}),
     })
+  }
+
+  /** Send the SDP answer to a server counter-offer. */
+  async sendAnswer(session: WhepSession, answer: string, signal: AbortSignal): Promise<void> {
+    const response = await fetch(session.url, {
+      method: 'PATCH',
+      redirect: 'error',
+      signal,
+      headers: {
+        ...this.sessionAuthHeader(session),
+        'Content-Type': 'application/sdp',
+      },
+      body: answer,
+    })
+    this.checkStatus(response, response.status === 204)
   }
 
   private authHeader(url: string): Record<string, string> {
@@ -66,7 +94,11 @@ export class HttpClient {
     })
   }
 
-  async sendOffer(offer: string, signal: AbortSignal, onSession: (session: WhepSession | null) => void): Promise<string> {
+  /**
+   * POST the client offer.
+   * Returns an answer body, or a counter-offer when the endpoint answered 406 with usable SDP.
+   */
+  async sendOffer(offer: string, signal: AbortSignal, onSession: (session: WhepSession | null) => void): Promise<{ answer: string } | { counterOffer: string, expiresAt: number }> {
     if (this.options.getState() !== 'running')
       throw new WebRTCError(ErrorTypes.STATE_ERROR, 'closed')
 
@@ -79,8 +111,10 @@ export class HttpClient {
         'Content-Type': 'application/sdp',
       },
       body: offer,
-    }).then((res) => {
-      this.checkStatus(res, res.status === 201)
+    }).then(async (res) => {
+      const counterCandidate = res.status === 406
+      if (!counterCandidate)
+        this.checkStatus(res, res.status === 201)
 
       const location = res.headers.get('Location')
       const base = res.url || endpoint
@@ -93,7 +127,18 @@ export class HttpClient {
         void res.body?.cancel().catch(() => {})
         signal.throwIfAborted()
       }
-      return res.text()
+      const body = await res.text()
+      if (!counterCandidate)
+        return { answer: body }
+
+      // 草案 §4.3.3：只有带 application/sdp 和合法 SDP offer 的 406 才是反向 offer。
+      const contentType = res.headers.get('Content-Type') ?? ''
+      if (!usable || !contentType.toLowerCase().startsWith('application/sdp') || !SdpUtils.isSdpOffer(body)) {
+        void res.body?.cancel().catch(() => {})
+        throw this.statusError(res.status)
+      }
+      // 草案 §4.3.2：未提供 valid-until 时反向 offer 只保留 30 秒。
+      return { counterOffer: body, expiresAt: readValidUntil(contentType) }
     })
   }
 
@@ -106,10 +151,14 @@ export class HttpClient {
     this.checkStatus(response, response.ok)
   }
 
-  async sendLocalCandidates(session: WhepSession, offerData: ParsedOffer, candidates: RTCIceCandidate[], signal: AbortSignal): Promise<void> {
+  /**
+   * Send one ICE fragment.
+   * Returns the rotated entity tag when the session answered a 200 (ICE restart) or null.
+   */
+  async sendLocalCandidates(session: WhepSession, offerData: ParsedOffer, candidates: RTCIceCandidate[], signal: AbortSignal): Promise<string | null> {
     const body = SdpUtils.generateSdpFragment(offerData, candidates)
     if (!body)
-      return
+      return null
 
     const response = await fetch(session.url, {
       method: 'PATCH',
@@ -122,6 +171,8 @@ export class HttpClient {
       },
       body,
     })
-    this.checkStatus(response, response.status === 204)
+    // 草案 §4.5.3：ICE 重启成功返回 200 + 新 ETag；普通候选聚合返回 204。
+    this.checkStatus(response, response.status === 204 || response.status === 200)
+    return response.status === 200 ? response.headers.get('ETag') : null
   }
 }

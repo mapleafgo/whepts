@@ -18,7 +18,7 @@ interface WebRTCErrorOptions extends ErrorOptions {
  * - SIGNAL_ERROR: 信令异常（SDP、ICE 服务器）
  * - STATE_ERROR: 状态异常（播放器已关闭等）
  * - REQUEST_ERROR: 请求异常（400、406 等错误状态码）
- * - NOT_FOUND_ERROR: 资源未找到（404）
+ * - NOT_FOUND_ERROR: 保留的导出值；HTTP 状态码统一通过 httpStatus 表达
  *
  * 注意：流连接断开已由 `flow:stalled` 事件独立处理，不作为错误类型。
  */

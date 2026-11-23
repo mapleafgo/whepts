@@ -1046,6 +1046,199 @@ test('an SDP answer rejection cleans up the registered session once', async (t) 
   assert.deepEqual(methods, ['OPTIONS', 'POST', 'DELETE'])
 })
 
+test('a 406 counter-offer completes the session with an SDP PATCH', async (t) => {
+  const calls = []
+  let issuedPeer
+  let emitTrickle
+  // 草案示例的 406 响应带 o= 与 ice-pwd；校验按此最小结构判定。
+  const counterOffer = 'v=0\r\no=- 2438602337097565327 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=ice-ufrag:server\r\na=ice-pwd:server-pwd\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:0\r\na=sendonly\r\n'
+  Object.defineProperty(globalThis, 'RTCSessionDescription', { configurable: true, value: class {} })
+  t.after(() => Reflect.deleteProperty(globalThis, 'RTCSessionDescription'))
+  class Peer {
+    addTransceiver() {}
+    async createOffer() { return { type: 'offer', sdp: 'v=0\r\na=ice-ufrag:client\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:0\r\n' } }
+    async setLocalDescription() {}
+    async setRemoteDescription(description) {
+      issuedPeer = this
+      emitTrickle = candidate => this.onicecandidate?.({ candidate })
+      calls.push(['setRemote', description.type])
+    }
+
+    async createAnswer() { return { type: 'answer', sdp: 'v=0\r\na=ice-ufrag:client-answer\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:0\r\n' } }
+    close() {}
+  }
+  Object.defineProperty(globalThis, 'RTCPeerConnection', { configurable: true, value: Peer })
+  t.after(() => Reflect.deleteProperty(globalThis, 'RTCPeerConnection'))
+  t.mock.method(globalThis, 'fetch', async (url, { method, headers, body }) => {
+    const type = new Headers(headers).get('Content-Type')
+    calls.push([method, type, body])
+    if (method === 'OPTIONS')
+      return new Response(null, { status: 204 })
+    if (method === 'POST')
+      return new Response(counterOffer, { status: 406, headers: { 'Location': `${new URL(url).pathname}/session`, 'Content-Type': 'application/sdp' } })
+    if (method === 'PATCH')
+      return new Response(null, { status: 204 })
+    return new Response(null, { status: 204 })
+  })
+  const player = new WebRTCWhep({
+    url: 'https://player.example/a',
+    container: { srcObject: null, addEventListener() {}, removeEventListener() {} },
+    lazyLoad: false,
+  })
+  t.after(() => player.close())
+  const errors = []
+  player.on('error', error => errors.push(`${error.type}:${error.httpStatus}`))
+  await setImmediate()
+  assert.ok(issuedPeer, JSON.stringify(calls))
+  await setImmediate()
+  assert.deepEqual(errors, [])
+  assert.equal(player.state, 'running')
+  const patches = calls.filter(([method]) => method === 'PATCH')
+  assert.equal(patches.length, 1, JSON.stringify(calls))
+  assert.equal(patches[0][1], 'application/sdp')
+  // 反向 offer 之后，候选片段必须使用 answer 的 ICE 凭据与 mid 作用域。
+  emitTrickle({ sdpMid: '0', candidate: 'candidate:after-answer' })
+  await setImmediate()
+  const trickles = calls.filter(([method, type]) => method === 'PATCH' && type === 'application/trickle-ice-sdpfrag')
+  assert.equal(trickles.length, 1, JSON.stringify(calls))
+  assert.match(trickles[0][2], /a=ice-ufrag:client-answer/)
+  assert.doesNotMatch(trickles[0][2], /a=ice-ufrag:client\r\n/)
+})
+test('an expired counter-offer is refused without sending an answer', async (t) => {
+  const calls = []
+  const counterOffer = 'v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=ice-ufrag:server\r\na=ice-pwd:server-pwd\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:0\r\na=sendonly\r\n'
+  Object.defineProperty(globalThis, 'RTCSessionDescription', { configurable: true, value: class {} })
+  t.after(() => Reflect.deleteProperty(globalThis, 'RTCSessionDescription'))
+  class Peer {
+    addTransceiver() {}
+    async createOffer() { return { type: 'offer', sdp: 'v=0\r\na=ice-ufrag:client\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:0\r\n' } }
+    async setLocalDescription() {}
+    async setRemoteDescription() {}
+    async createAnswer() { return { type: 'answer', sdp: 'v=0\r\na=ice-ufrag:client-answer\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:0\r\n' } }
+    close() {}
+  }
+  Object.defineProperty(globalThis, 'RTCPeerConnection', { configurable: true, value: Peer })
+  t.after(() => Reflect.deleteProperty(globalThis, 'RTCPeerConnection'))
+  t.mock.method(globalThis, 'fetch', async (url, { method }) => {
+    calls.push(method)
+    if (method === 'OPTIONS')
+      return new Response(null, { status: 204 })
+    if (method === 'POST')
+      return new Response(counterOffer, { status: 406, headers: { 'Location': `${new URL(url).pathname}/session`, 'Content-Type': 'application/sdp; valid-until="Thu, 01 Jan 1970 00:00:00 GMT"' } })
+    return new Response(null, { status: 204 })
+  })
+  const player = new WebRTCWhep({
+    url: 'https://player.example/a',
+    container: { srcObject: null, addEventListener() {}, removeEventListener() {} },
+    lazyLoad: false,
+  })
+  t.after(() => player.close())
+  const errors = []
+  player.on('error', error => errors.push([error.type, error.phase]))
+  await setImmediate()
+  assert.equal(errors.length, 1)
+  assert.equal(errors[0][0], 'SignalError')
+  assert.equal(player.state, 'failed')
+  assert.equal(calls.includes('PATCH'), false)
+})
+
+test('a 406 without a usable SDP still fails as an HTTP error', async (t) => {
+  for (const headers of [{ Location: '/session' }, { 'Content-Type': 'application/sdp' }]) {
+    for (const body of ['', 'not an sdp']) {
+      await t.test(JSON.stringify(headers) + body, async (t) => {
+        class Peer {
+          addTransceiver() {}
+          async createOffer() { return { type: 'offer', sdp: 'v=0\\r\\na=ice-ufrag:client\\r\\nm=video 9 UDP/RTP/SAVPF 96\\r\\na=mid:0\\r\\n' } }
+          async setLocalDescription() {}
+          close() {}
+        }
+        Object.defineProperty(globalThis, 'RTCPeerConnection', { configurable: true, value: Peer })
+        t.after(() => Reflect.deleteProperty(globalThis, 'RTCPeerConnection'))
+        const calls = []
+        t.mock.method(globalThis, 'fetch', async (_url, { method }) => {
+          calls.push(method)
+          return method === 'OPTIONS'
+            ? new Response(null, { status: 204 })
+            : new Response(body, { status: 406, headers })
+        })
+        const player = new WebRTCWhep({
+          url: 'https://player.example/a',
+          container: { srcObject: null, addEventListener() {}, removeEventListener() {} },
+          lazyLoad: false,
+        })
+        t.after(() => player.close())
+        const errors = []
+        player.on('error', error => errors.push([error.type, error.phase, error.httpStatus]))
+        await setImmediate()
+        assert.deepEqual(errors, [['RequestError', 'signaling', 406]])
+        await setImmediate()
+        // 已登记的会话按关闭规则清理一次；断言关注的是没有发 PATCH。
+        assert.deepEqual(calls.filter(method => method !== 'DELETE'), ['OPTIONS', 'POST'])
+        assert.ok(calls.filter(method => method === 'DELETE').length <= 1)
+        assert.equal(player.state, 'failed')
+      })
+    }
+  }
+})
+test('an ICE restart PATCH accepts 200 and rotates the entity tag', async (t) => {
+  let emitCandidate
+  let patchResponse
+  const fragments = []
+  const tags = []
+  Object.defineProperty(globalThis, 'RTCSessionDescription', { configurable: true, value: class {} })
+  t.after(() => Reflect.deleteProperty(globalThis, 'RTCSessionDescription'))
+  const sdp = 'v=0\r\na=ice-ufrag:session\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:camera\r\na=ice-ufrag:media\r\n'
+  class Peer {
+    addTransceiver() {}
+    async createOffer() { return { type: 'offer', sdp } }
+    async setLocalDescription() {}
+    onicecandidate = null
+    async setRemoteDescription() {
+      emitCandidate = candidate => this.onicecandidate?.({ candidate })
+      this.onicecandidate?.({ candidate: { sdpMid: 'camera', candidate: 'candidate:first' } })
+    }
+
+    close() {}
+  }
+  Object.defineProperty(globalThis, 'RTCPeerConnection', { configurable: true, value: Peer })
+  t.after(() => Reflect.deleteProperty(globalThis, 'RTCPeerConnection'))
+  t.mock.method(globalThis, 'fetch', async (url, { method, body, headers }) => {
+    if (method === 'POST')
+      return new Response(sdp, { status: 201, headers: { Location: `${new URL(url).pathname}/session`, ETag: '"gen-1"' } })
+    if (method === 'PATCH') {
+      fragments.push(body)
+      tags.push(new Headers(headers).get('If-Match'))
+      return fragments.length === 1 ? new Response(null, { status: 204 }) : patchResponse
+    }
+    return new Response(null, { status: 204 })
+  })
+  const diagnostics = []
+  const errors = []
+  const player = new WebRTCWhep({
+    url: 'https://player.example/a',
+    onDiagnostic: record => diagnostics.push(record),
+    container: { srcObject: null, addEventListener() {}, removeEventListener() {} },
+    lazyLoad: false,
+  })
+  t.after(() => player.close())
+  player.on('error', error => errors.push(error.type))
+  await setImmediate()
+  assert.equal(fragments.length, 1)
+  patchResponse = new Response('a=ice-ufrag:restarted\r\n', { status: 200, headers: { ETag: '"gen-2"' } })
+  // 候选在等待上一次 PATCH 确认时缓冲，因此第二个请求仍携带旧 ETag。
+  emitCandidate({ sdpMid: 'camera', candidate: 'candidate:second' })
+  await setImmediate()
+  assert.deepEqual(errors, [])
+  assert.deepEqual(diagnostics, [])
+  assert.equal(player.state, 'running')
+  assert.equal(fragments.length, 2)
+  patchResponse = new Response(null, { status: 204 })
+  emitCandidate({ sdpMid: 'camera', candidate: 'candidate:third' })
+  await setImmediate()
+  assert.deepEqual(tags, ['"gen-1"', '"gen-1"', '"gen-2"'])
+  assert.deepEqual(errors, [])
+})
+
 test('late PATCH completion cannot affect a replacement session', async (t) => {
   for (const status of [204, 404]) {
     await t.test(String(status), async (t) => {
@@ -1211,6 +1404,115 @@ test('ICE discovery ignores unrelated links and reads TURN credentials in any or
   assert.deepEqual(peers.at(-1), [{ urls: ['turn:relay.example.test'], username: 'viewer', credential: 'fixture, value', credentialType: 'password' }])
 })
 
+test('ICE link parsing follows RFC 8288 and Chromium acceptance rules', async (t) => {
+  const cases = [
+    {
+      name: 'anchored link is skipped',
+      link: '<stun:anchored.example.test>; rel="ice-server"; anchor="https://elsewhere.test/",<stun:plain.example.test>; rel="ice-server"',
+      expected: [{ urls: ['stun:plain.example.test'] }],
+    },
+    {
+      name: 'case-insensitive relation and attribute names',
+      link: '<turn:Case.example.test?transport=udp>; REL="ICE-Server"; UserName="viewer"; CREDENTIAL="secret"',
+      expected: [{ urls: ['turn:Case.example.test?transport=udp'], username: 'viewer', credential: 'secret', credentialType: 'password' }],
+    },
+    {
+      name: 'TURN without credentials is dropped',
+      link: '<turn:noauth.example.test>; rel="ice-server",<stun:stun.example.test>; rel="ice-server"',
+      expected: [{ urls: ['stun:stun.example.test'] }],
+    },
+    {
+      name: 'duplicate rel keeps the first value only',
+      link: '<stun:first.example.test>; rel="help"; rel="ice-server",<stun:second.example.test>; rel="ice-server"',
+      expected: [{ urls: ['stun:second.example.test'] }],
+    },
+    {
+      name: 'empty list elements are ignored',
+      link: ',, <stun:only.example.test>; rel="ice-server",',
+      expected: [{ urls: ['stun:only.example.test'] }],
+    },
+  ]
+  for (const item of cases) {
+    await t.test(item.name, async (t) => {
+      const peers = []
+      class Peer {
+        constructor({ iceServers }) { peers.push(iceServers) }
+        addTransceiver() {}
+        async createOffer() { return { type: 'offer', sdp: 'v=0\r\n' } }
+        async setLocalDescription() {}
+        close() {}
+      }
+      Object.defineProperty(globalThis, 'RTCPeerConnection', { configurable: true, value: Peer })
+      t.after(() => Reflect.deleteProperty(globalThis, 'RTCPeerConnection'))
+      t.mock.method(globalThis, 'fetch', async (_url, { method }) => {
+        if (method !== 'OPTIONS')
+          return new Promise(() => {})
+        return new Response(null, { status: 204, headers: { Link: item.link } })
+      })
+      const player = new WebRTCWhep({
+        url: 'https://player.example/a',
+        container: { srcObject: null, addEventListener() {}, removeEventListener() {} },
+        lazyLoad: false,
+      })
+      t.after(() => player.close())
+      const errors = []
+      player.on('error', error => errors.push(error.message))
+      await setImmediate()
+      assert.deepEqual(errors, [])
+      assert.deepEqual(peers.at(-1), item.expected)
+    })
+  }
+})
+
+test('an unusable ICE server link is skipped instead of failing discovery', async (t) => {
+  const peers = []
+  class Peer {
+    constructor({ iceServers }) { peers.push(iceServers) }
+    addTransceiver() {}
+    async createOffer() { return { type: 'offer', sdp: 'v=0\r\n' } }
+    async setLocalDescription() {}
+    close() {}
+  }
+  Object.defineProperty(globalThis, 'RTCPeerConnection', { configurable: true, value: Peer })
+  t.after(() => Reflect.deleteProperty(globalThis, 'RTCPeerConnection'))
+  t.mock.method(globalThis, 'fetch', async (_url, { method }) => {
+    if (method !== 'OPTIONS')
+      return new Promise(() => {})
+    return new Response(null, { status: 204, headers: {
+      Link: '<https://example.test/help>; rel="help",<nonsense>; rel="ice-server",<stun:stun.example.test:3478>; rel="ice-server"',
+    } })
+  })
+  const player = new WebRTCWhep({
+    url: 'https://player.example/a',
+    container: { srcObject: null, addEventListener() {}, removeEventListener() {} },
+    lazyLoad: false,
+  })
+  t.after(() => player.close())
+  const errors = []
+  player.on('error', error => errors.push(error))
+  await setImmediate()
+  assert.deepEqual(errors, [])
+  assert.deepEqual(peers.at(-1), [{ urls: ['stun:stun.example.test:3478'] }])
+})
+
+test('ice-server links with no usable URL still fail discovery once', async (t) => {
+  t.mock.method(globalThis, 'fetch', async (_url, { method }) => {
+    if (method !== 'OPTIONS')
+      return new Promise(() => {})
+    return new Response(null, { status: 204, headers: { Link: '<nonsense>; rel="ice-server"' } })
+  })
+  const player = new WebRTCWhep({
+    url: 'https://player.example/a',
+    container: { srcObject: null, addEventListener() {}, removeEventListener() {} },
+    lazyLoad: false,
+  })
+  t.after(() => player.close())
+  const errors = []
+  player.on('error', error => errors.push([player.state, error.type, error.phase]))
+  await setImmediate()
+  assert.deepEqual(errors, [['failed', 'SignalError', 'signaling']])
+})
+
 test('failed ICE discovery preserves the HTTP status and stops signaling', async (t) => {
   for (const status of [400, 401, 403, 404, 406, 500, 503]) {
     await t.test(String(status), async (t) => {
@@ -1230,7 +1532,8 @@ test('failed ICE discovery preserves the HTTP status and stops signaling', async
       await setImmediate()
       assert.deepEqual(methods, ['OPTIONS'])
       assert.deepEqual(errors.map(({ phase, httpStatus }) => [phase, httpStatus]), [['signaling', status]])
-      assert.equal(errors[0].type, status === 404 ? ErrorTypes.NOT_FOUND_ERROR : ErrorTypes.REQUEST_ERROR)
+      // 草案 §4.1：播放器不得把状态码映射到具体原因，只回落通用类别。
+      assert.equal(errors[0].type, ErrorTypes.REQUEST_ERROR)
       assert.equal(player.state, 'failed')
       assert.ok(!errors[0].message.includes('Private upstream details'))
     })
@@ -1683,4 +1986,213 @@ test('rejecting a URL update never reopens a closed player', async (t) => {
   await setImmediate()
   assert.equal(player.state, 'closed')
   assert.equal(requests.length, requestedBeforeUpdates)
+})
+
+test('stats rejection reports a request-failed diagnostic instead of a stall', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval', 'setTimeout', 'Date'], now: 1000 })
+  let peer
+  const page = Object.assign(new EventTarget(), { hidden: false })
+  Object.defineProperty(globalThis, 'document', { configurable: true, value: page })
+  t.after(() => Reflect.deleteProperty(globalThis, 'document'))
+  let failing = false
+  class Peer {
+    connectionState = 'connected'
+    addTransceiver() {}
+    async createOffer() {
+      if (this.ontrack)
+        peer = this
+      return { sdp: 'v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:0\r\n' }
+    }
+
+    async setLocalDescription() {}
+    getStats() {
+      if (failing)
+        return Promise.reject(new DOMException('Private stats detail', 'InvalidStateError'))
+      return Promise.resolve(new Map())
+    }
+
+    close() {}
+  }
+  Object.defineProperty(globalThis, 'RTCPeerConnection', { configurable: true, value: Peer })
+  t.after(() => Reflect.deleteProperty(globalThis, 'RTCPeerConnection'))
+  t.mock.method(globalThis, 'fetch', async (_url, { method }) => method === 'POST' ? new Promise(() => {}) : new Response(null, { status: 204 }))
+  const container = { srcObject: null, addEventListener() {}, removeEventListener() {} }
+  const diagnostics = []
+  const player = new WebRTCWhep({ url: 'https://player.example/a', container, lazyLoad: false, onDiagnostic: record => diagnostics.push(record) })
+  t.after(() => player.close())
+  await setImmediate()
+  peer.onconnectionstatechange()
+  peer.ontrack({ streams: [{ getTracks: () => [{ kind: 'video' }] }] })
+  const stalls = []
+  player.on('flow:stalled', event => stalls.push(event))
+  failing = true
+  for (let i = 0; i < 12; i++) {
+    t.mock.timers.tick(1000)
+    await setImmediate()
+  }
+  assert.equal(stalls.length, 0)
+  assert.equal(player.state, 'running')
+  assert.ok(diagnostics.length >= 1)
+  const { playerId, attemptId, state, ...rest } = diagnostics.at(-1)
+  assert.deepEqual(rest, { operation: 'sample-flow', phase: 'connection', reason: 'request-failed', elapsedMs: 0, cause: 'InvalidStateError' })
+  assert.equal(attemptId, 1)
+  assert.equal(state, 'running')
+  assert.ok(Number.isInteger(playerId))
+  assert.ok(!JSON.stringify(diagnostics).includes('Private stats detail'))
+})
+
+test('a rejected codec probe still starts playback detection with no extensions', async (t) => {
+  class Peer {
+    addTransceiver() {}
+    createOffer() { throw new DOMException('Private probe detail', 'NotSupportedError') }
+    close() {}
+  }
+  Object.defineProperty(globalThis, 'RTCPeerConnection', { configurable: true, value: Peer })
+  t.after(() => Reflect.deleteProperty(globalThis, 'RTCPeerConnection'))
+  const fetch = t.mock.method(globalThis, 'fetch', () => new Promise(() => {}))
+  const player = new WebRTCWhep({
+    url: 'https://player.example/a',
+    container: { srcObject: null, addEventListener() {}, removeEventListener() {} },
+    lazyLoad: false,
+  })
+  t.after(() => player.close())
+  const results = []
+  player.on('codecs:detected', result => results.push(result))
+  await setImmediate()
+  assert.deepEqual(results, [[]])
+  assert.equal(fetch.mock.callCount(), 1)
+})
+
+test('steady flow sampling replaces the startup check instead of scheduling both', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval', 'setTimeout', 'Date'], now: 1000 })
+  let peer
+  let samples = 0
+  const page = Object.assign(new EventTarget(), { hidden: false })
+  Object.defineProperty(globalThis, 'document', { configurable: true, value: page })
+  t.after(() => Reflect.deleteProperty(globalThis, 'document'))
+  class Peer {
+    connectionState = 'connected'
+    addTransceiver() {}
+    async createOffer() {
+      if (this.ontrack)
+        peer = this
+      return { sdp: 'v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:0\r\n' }
+    }
+
+    async setLocalDescription() {}
+    getStats() {
+      samples++
+      return Promise.resolve(new Map())
+    }
+
+    close() {}
+  }
+  Object.defineProperty(globalThis, 'RTCPeerConnection', { configurable: true, value: Peer })
+  t.after(() => Reflect.deleteProperty(globalThis, 'RTCPeerConnection'))
+  t.mock.method(globalThis, 'fetch', async (_url, { method }) => method === 'POST' ? new Promise(() => {}) : new Response(null, { status: 204 }))
+  const player = new WebRTCWhep({ url: 'https://player.example/a', container: { srcObject: null, addEventListener() {}, removeEventListener() {} }, lazyLoad: false })
+  t.after(() => player.close())
+  await setImmediate()
+  peer.onconnectionstatechange()
+  peer.ontrack({ streams: [{ getTracks: () => [{ kind: 'video' }] }] })
+  for (let i = 0; i < 45; i++) {
+    t.mock.timers.tick(1000)
+    await setImmediate()
+  }
+  const startup = samples
+  for (let i = 0; i < 20; i++) {
+    t.mock.timers.tick(1000)
+    await setImmediate()
+  }
+  const steady = samples - startup
+  assert.ok(startup >= 6, startup)
+  assert.ok(steady >= 1 && steady <= 3, steady)
+})
+
+test('transport failure cancels pending media recovery', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 })
+  let peer
+  let plays = 0
+  class Peer {
+    connectionState = 'connected'
+    addTransceiver() {}
+    async createOffer() {
+      if (this.ontrack)
+        peer = this
+      return { sdp: 'v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:0\r\n' }
+    }
+
+    async setLocalDescription() {}
+    close() { this.connectionState = 'closed' }
+  }
+  Object.defineProperty(globalThis, 'RTCPeerConnection', { configurable: true, value: Peer })
+  t.after(() => Reflect.deleteProperty(globalThis, 'RTCPeerConnection'))
+  t.mock.method(globalThis, 'fetch', (_url, { method }) => method === 'POST' ? new Promise(() => {}) : Promise.resolve(new Response(null, { status: 204 })))
+  const container = Object.assign(new EventTarget(), {
+    srcObject: null,
+    paused: true,
+    muted: false,
+    currentTime: 0,
+    async play() {
+      plays++
+      this.paused = false
+    },
+  })
+  const player = new WebRTCWhep({ url: 'https://player.example/a', container, lazyLoad: false })
+  t.after(() => player.close())
+  await setImmediate()
+  const successes = []
+  player.on('play:success', () => successes.push(plays))
+  peer.onconnectionstatechange()
+  peer.ontrack({ streams: [{ getTracks: () => [{ kind: 'video' }] }] })
+  await setImmediate()
+  assert.equal(plays, 1)
+  container.error = { code: 3, message: 'Private decode detail' }
+  container.dispatchEvent(new Event('error'))
+  peer.connectionState = 'failed'
+  peer.onconnectionstatechange()
+  for (let i = 0; i < 3; i++) {
+    t.mock.timers.tick(1000)
+    await setImmediate()
+  }
+  assert.equal(plays, 1)
+  assert.deepEqual(successes, [1])
+})
+
+test('an external abort during cleanup is reported as a request failure', async (t) => {
+  const cleanupDeadline = new AbortController()
+  t.mock.method(AbortSignal, 'timeout', () => cleanupDeadline.signal)
+  const sdp = 'v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:0\r\n'
+  class Peer {
+    addTransceiver() {}
+    async createOffer() { return { type: 'offer', sdp } }
+    async setLocalDescription() {}
+    async setRemoteDescription() {}
+    close() {}
+  }
+  Object.defineProperty(globalThis, 'RTCPeerConnection', { configurable: true, value: Peer })
+  t.after(() => Reflect.deleteProperty(globalThis, 'RTCPeerConnection'))
+  t.mock.method(globalThis, 'fetch', (_url, { method }) => {
+    if (method === 'POST')
+      return Promise.resolve(new Response(sdp, { status: 201, headers: { Location: '/session/a' } }))
+    if (method === 'DELETE')
+      return Promise.reject(new DOMException('Private abort detail', 'AbortError'))
+    return Promise.resolve(new Response(null, { status: 204 }))
+  })
+  const diagnostics = []
+  const player = new WebRTCWhep({
+    url: 'https://player.example/a',
+    container: { srcObject: null, addEventListener() {}, removeEventListener() {} },
+    lazyLoad: false,
+    onDiagnostic: record => diagnostics.push(record),
+  })
+  await setImmediate()
+  player.close()
+  cleanupDeadline.abort(new DOMException('Private abort detail', 'AbortError'))
+  await setImmediate()
+  assert.equal(player.state, 'closed')
+  assert.equal(diagnostics.length, 1)
+  assert.equal(diagnostics[0].reason, 'request-failed')
+  assert.equal(diagnostics[0].operation, 'delete-session')
+  assert.ok(!JSON.stringify(diagnostics).includes('Private abort detail'))
 })

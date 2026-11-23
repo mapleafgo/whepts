@@ -22,6 +22,7 @@ enum TaskStatus {
  */
 interface Task {
   id: string
+  owner: string
   interval: number
   priority: TaskPriority
   status: TaskStatus
@@ -108,12 +109,18 @@ export class MonitorScheduler {
   register(options: RegisterTaskOptions): () => void {
     const { interval, owner, priority = TaskPriority.NORMAL, callback } = options
     const taskId = `${owner}-${interval}`
+    // 同一 owner 只保留最新任务，避免间隔切换时留下孤儿任务。
+    for (const [id, task] of this.tasks) {
+      if (task.owner === owner && id !== taskId)
+        this.tasks.delete(id)
+    }
 
     const now = Date.now()
 
     // 创建或更新任务
     this.tasks.set(taskId, {
       id: taskId,
+      owner,
       interval,
       priority,
       status: TaskStatus.SCHEDULED,
@@ -139,7 +146,7 @@ export class MonitorScheduler {
    */
   pauseByOwner(owner: string): void {
     for (const task of this.tasks.values()) {
-      if (task.id.startsWith(owner) && task.status === TaskStatus.SCHEDULED) {
+      if (task.owner === owner && task.status === TaskStatus.SCHEDULED) {
         task.status = TaskStatus.PAUSED
       }
     }
@@ -151,7 +158,7 @@ export class MonitorScheduler {
   resumeByOwner(owner: string): void {
     const now = Date.now()
     for (const task of this.tasks.values()) {
-      if (task.id.startsWith(owner) && task.status === TaskStatus.PAUSED) {
+      if (task.owner === owner && task.status === TaskStatus.PAUSED) {
         task.status = TaskStatus.SCHEDULED
         task.nextRun = now + task.interval
       }
@@ -283,9 +290,11 @@ export class MonitorScheduler {
       task.nextRun = now + task.interval
       task.status = TaskStatus.SCHEDULED
     }
-    catch {
-      console.error('[MonitorScheduler] Task failed', { taskId: task.id })
-      // 错误任务继续调度，避免单次错误影响后续
+    catch (error) {
+      console.warn('[MonitorScheduler] Task failed', { taskId: task.id, error: error instanceof Error ? error.name : 'unknown' })
+      // 失败仍推进节奏，避免同一个出错任务按每次 tick 反复重跑。
+      task.lastRun = now
+      task.nextRun = now + task.interval
       task.status = TaskStatus.SCHEDULED
     }
   }

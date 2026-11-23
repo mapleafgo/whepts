@@ -39,6 +39,18 @@ export class SdpUtils {
   }
 
   /**
+   * Check the minimum JSEP shape of an initial offer: session lines, at least one m-line and ICE credentials.
+   */
+  static isSdpOffer(sdp: string): boolean {
+    const lines = sdp.split(/\r?\n/).filter(line => line !== '')
+    return lines.some(line => /^v=\d+$/.test(line))
+      && lines.some(line => line.startsWith('o='))
+      && lines.some(line => line.startsWith('m='))
+      && lines.some(line => line.startsWith('a=ice-ufrag:'))
+      && lines.some(line => line.startsWith('a=ice-pwd:'))
+  }
+
+  /**
    * Reserve a payload type.
    */
   static reservePayloadType(payloadTypes: string[]): string {

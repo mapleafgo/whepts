@@ -21,6 +21,7 @@ export class TrackManager {
     scheduler: MonitorScheduler,
     onFlowProgress: (pc: RTCPeerConnection) => void,
     onFlowTimeout: (pc: RTCPeerConnection, elapsedMs: number) => void,
+    onFlowSampleFailed: (pc: RTCPeerConnection, errorName: string) => void,
   ) {
     this.playMonitor = new PlayMonitor(
       {
@@ -35,6 +36,7 @@ export class TrackManager {
       {
         onProgress: onFlowProgress,
         onTimeout: onFlowTimeout,
+        onSampleFailed: onFlowSampleFailed,
         notify: this.notify,
       },
       scheduler,
@@ -144,6 +146,11 @@ export class TrackManager {
     void this.playMonitor.play()
   }
 
+  /** Cancel media recovery that belongs to a transport that no longer exists. */
+  invalidateMediaRecovery(): void {
+    this.playMonitor.invalidate()
+  }
+
   stop(): void {
     for (const track of this.watchedVideoTracks)
       track.removeEventListener('ended', this.onVideoEnded)
@@ -152,6 +159,7 @@ export class TrackManager {
     this.videoDeadline = undefined
     this.waitingForVideo = false
     this.playMonitor.stopMonitoring()
+    this.playMonitor.invalidate()
     this.flowMonitor.stop()
     this.detachStream()
     this.stream = undefined

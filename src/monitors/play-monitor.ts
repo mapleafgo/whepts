@@ -134,6 +134,17 @@ export class PlayMonitor {
     })
   }
 
+  /** Stop pending playback recovery without touching the host's element. */
+  invalidate(): void {
+    this.generation++
+    this.activeSource = undefined
+    this.recovering = false
+    clearTimeout(this.recoveryTimer)
+    this.recoveryTimer = undefined
+    clearTimeout(this.verificationTimer)
+    this.verificationTimer = undefined
+  }
+
   /**
    * 停止播放停滞监控
    */

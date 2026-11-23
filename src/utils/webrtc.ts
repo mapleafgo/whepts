@@ -96,6 +96,7 @@ export class WebRtcUtils {
   /** Read only ICE server links, preserving quoted delimiters in parameters. */
   static linkToIceServers(links: string | null): RTCIceServer[] {
     const servers: RTCIceServer[] = []
+    let declared = false
     const linkPattern = /(?:^|,)\s*<([^>]*)>((?:[^,\x22]|"(?:[^"\\]|\\.)*")*)/g
     const parameterPattern = /;\s*([\w-]+)\s*=\s*(?:"((?:[^"\\]|\\.)*)"|([^;\s]+))/g
     for (const [, url, parameters] of (links ?? '').matchAll(linkPattern)) {
@@ -107,12 +108,20 @@ export class WebRtcUtils {
       }
       if (!fields.get('rel')?.toLowerCase().split(/\s+/).includes('ice-server'))
         continue
+      declared = true
+      // 单条坏地址不应拖垮整次发现；浏览器遇到不可用的 ICE 服务器同样只跳过。
       if (!/^(?:stun|stuns|turn|turns):\S+$/i.test(url))
-        throw new WebRTCError(ErrorTypes.SIGNAL_ERROR, 'Invalid ICE server URL')
+        continue
+      // RFC 8288 §3.2：无法重设锚点的链接必须整条忽略。
+      if (fields.has('anchor'))
+        continue
 
       const server: RTCIceServer = { urls: [url] }
       const username = fields.get('username')
       const credential = fields.get('credential')
+      // Chromium 对缺凭据的 TURN 地址直接抛错，导致整个 PeerConnection 构造失败，这里预过滤。
+      if (/^turns?:/i.test(url) && (username === undefined || credential === undefined))
+        continue
       if (username !== undefined && credential !== undefined && (fields.get('credential-type') ?? 'password') === 'password') {
         server.username = username
         server.credential = credential
@@ -120,6 +129,8 @@ export class WebRtcUtils {
       }
       servers.push(server)
     }
+    if (declared && servers.length === 0)
+      throw new WebRTCError(ErrorTypes.SIGNAL_ERROR, 'No usable ICE server in Link header')
     return servers
   }
 }
