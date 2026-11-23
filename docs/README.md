@@ -3,6 +3,7 @@
 | 文档 | 用途 |
 | --- | --- |
 | [README](../README.md) | 安装、配置、事件、诊断、服务端接入与当前限制 |
+| [AGENTS](../AGENTS.md) | 仓库工作规范：命令、目录、代码约定、协议与提交流程 |
 | [架构改造方案](plans/2026-11-20-whepts-architecture-design.md) | 当前架构、生命周期契约与发布门槛（A1–A9） |
 | [验收记录](plans/2026-11-20-whepts-acceptance.md) | 每条验收标准的现有证据、未验证项与实测记录 |
 | [跨协议播放器架构调研](plans/2026-11-20-player-architecture-research.md) | 过程记录：其他播放器的架构取舍 |

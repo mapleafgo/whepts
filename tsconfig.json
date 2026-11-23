@@ -32,7 +32,6 @@
   "exclude": [
     "dist",
     "node_modules",
-    "rollup.config.ts",
-    "eslint.config.ts"
+    "rollup.config.ts"
   ]
 }
