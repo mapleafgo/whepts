@@ -57,14 +57,15 @@ export class PlayMonitor {
   /**
    * 尝试播放媒体
    */
-  async play(force = false): Promise<void> {
+  /** Start playback on the element. `freshStream` means the element was just re-attached. */
+  async play({ freshStream = false }: { freshStream?: boolean } = {}): Promise<void> {
     this.stopMonitoring()
     const generation = this.generation
     const stream = this.container.srcObject
     this.activeSource = stream
     const isCurrent = (): boolean => this.generation === generation && this.container.srcObject === stream
     // 赋值 srcObject 会重置加载状态，此时必须真正调用 play() 才能把新流带入播放。
-    if (!force && !this.container.paused) {
+    if (!freshStream && !this.container.paused) {
       this.startMonitoring()
       return
     }

@@ -2328,6 +2328,68 @@ test('a reclaimed element is not detached by a pause triggered by visibility', a
   assert.equal(container.srcObject, stream)
 })
 
+test('a candidate PATCH failure is attributed to the attempt that sent it', async (t) => {
+  let peer
+  let failFirstPatch
+  const diagnostics = []
+  Object.defineProperty(globalThis, 'RTCSessionDescription', { configurable: true, value: class {} })
+  t.after(() => Reflect.deleteProperty(globalThis, 'RTCSessionDescription'))
+  const sdp = 'v=0\r\na=ice-ufrag:session\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:0\r\na=ice-ufrag:media\r\n'
+  class Peer {
+    connectionState = 'connected'
+    addTransceiver() {}
+    async createOffer() {
+      if (this.ontrack)
+        peer = this
+      return { type: 'offer', sdp }
+    }
+
+    async setLocalDescription() {}
+    async setRemoteDescription() {}
+    close() {}
+  }
+  Object.defineProperty(globalThis, 'RTCPeerConnection', { configurable: true, value: Peer })
+  t.after(() => Reflect.deleteProperty(globalThis, 'RTCPeerConnection'))
+  let patched = 0
+  t.mock.method(globalThis, 'fetch', (url, { method, signal }) => {
+    if (method === 'POST')
+      return Promise.resolve(new Response(sdp, { status: 201, headers: { Location: `${new URL(url).pathname}/session`, ETag: '"tag"' } }))
+    if (method === 'PATCH') {
+      patched++
+      if (patched === 1) {
+        return new Promise((_resolve, reject) => {
+          failFirstPatch = () => reject(new TypeError('Private network detail'))
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+        })
+      }
+      return Promise.resolve(new Response(null, { status: 204 }))
+    }
+    return Promise.resolve(new Response(null, { status: 204 }))
+  })
+  const player = new WebRTCWhep({
+    url: 'https://player.example/a',
+    container: { srcObject: null, addEventListener() {}, removeEventListener() {} },
+    lazyLoad: false,
+    onDiagnostic: record => diagnostics.push(record),
+  })
+  t.after(() => player.close())
+  await setImmediate()
+  peer.onicecandidate({ candidate: { sdpMid: '0', candidate: 'candidate:first' } })
+  await setImmediate()
+  assert.equal(patched, 1)
+  // 在途请求失败时，诊断必须归属发起它的那次尝试。
+  failFirstPatch()
+  await setImmediate()
+  const failed = diagnostics.filter(record => record.operation === 'trickle-ice')
+  assert.equal(failed.length, 1, JSON.stringify(diagnostics))
+  assert.equal(failed[0].attemptId, 1)
+  // 会话保持可用，后续候选照常发送。
+  peer.onicecandidate({ candidate: { sdpMid: '0', candidate: 'candidate:second' } })
+  await setImmediate()
+  assert.equal(patched, 2)
+  assert.equal(player.state, 'running')
+})
+
 test('switching source reattaches the new stream and starts it explicitly', async (t) => {
   let peer
   class Peer {

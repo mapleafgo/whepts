@@ -460,6 +460,8 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
       return
 
     const session = this.session
+    // 归属在发起时确定：失败回调时 this.attempt 可能已换成新尝试。
+    const attemptId = this.attempt?.id
     this.candidateDrain = signal
     try {
       while (!signal.aborted && this.queuedCandidates.length !== 0) {
@@ -479,7 +481,6 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
           if (signal.aborted)
             return
           // 单批失败不结束会话：记录诊断后继续发送后续候选。
-          const attemptId = this.attempt?.id
           this.notifyDiagnostic({
             operation: 'trickle-ice',
             phase: 'signaling',

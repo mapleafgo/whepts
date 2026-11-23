@@ -134,7 +134,9 @@ export class TrackManager {
 
   private syncPlayback(): void {
     if (!this.visible || this.manualPause) {
+      // 与 stop() 保持一致：卸载时同时停止采样并作废旧恢复。
       this.playMonitor.stopMonitoring()
+      this.playMonitor.invalidate()
       this.detachStream()
       return
     }
@@ -146,7 +148,7 @@ export class TrackManager {
     const attached = this.container.srcObject !== this.stream
     if (attached)
       this.container.srcObject = this.stream
-    void this.playMonitor.play(attached)
+    void this.playMonitor.play({ freshStream: attached })
   }
 
   /** Cancel media recovery that belongs to a transport that no longer exists. */
