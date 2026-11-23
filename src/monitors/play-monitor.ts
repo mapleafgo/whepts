@@ -27,6 +27,8 @@ export interface PlayMonitorOptions {
  */
 export class PlayMonitor {
   private lastCurrentTime = 0
+  // 挂载后的第一次采样只建立基线：此时时钟往往刚起步，不足以判断停滞。
+  private needsBaseline = false
   private generation = 0
   private activeSource?: HTMLMediaElement['srcObject']
   private recovering = false
@@ -55,13 +57,14 @@ export class PlayMonitor {
   /**
    * 尝试播放媒体
    */
-  async play(): Promise<void> {
+  async play(force = false): Promise<void> {
     this.stopMonitoring()
     const generation = this.generation
     const stream = this.container.srcObject
     this.activeSource = stream
     const isCurrent = (): boolean => this.generation === generation && this.container.srcObject === stream
-    if (!this.container.paused) {
+    // 赋值 srcObject 会重置加载状态，此时必须真正调用 play() 才能把新流带入播放。
+    if (!force && !this.container.paused) {
       this.startMonitoring()
       return
     }
@@ -124,6 +127,7 @@ export class PlayMonitor {
   private startMonitoring(): void {
     // 初始化 lastCurrentTime
     this.lastCurrentTime = this.container.currentTime
+    this.needsBaseline = true
 
     // 注册监控任务（使用固定的类型名称作为 owner）
     this.unregisterMonitor = this.scheduler.register({
@@ -172,6 +176,11 @@ export class PlayMonitor {
     }
 
     const currentTime = this.container.currentTime
+    if (this.needsBaseline) {
+      this.needsBaseline = false
+      this.lastCurrentTime = currentTime
+      return
+    }
     const timeAdvanced = currentTime - this.lastCurrentTime
 
     // 如果 5 秒内时间前进少于 0.1 秒，认为已停滞

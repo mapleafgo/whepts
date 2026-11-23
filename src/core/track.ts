@@ -79,7 +79,7 @@ export class TrackManager {
     const tracks = [...new Set([...previousTracks, ...(incoming?.getTracks() ?? []), ...(evt.track ? [evt.track] : [])])].filter(track => track.readyState !== 'ended')
     if (tracks.length !== previousTracks.length || tracks.some(track => !previousTracks.includes(track))) {
       this.playMonitor.stopMonitoring()
-      this.detachStream()
+      // 不先清空元素：清空再赋值会让元素多跑一次 load algorithm，落在尚未完成的加载上。
       this.stream = !this.stream && incoming ? incoming : new MediaStream(tracks)
     }
 
@@ -139,11 +139,14 @@ export class TrackManager {
       return
     }
 
-    if (!this.stream || !this.hasVideo() || (this.container.srcObject !== null && this.container.srcObject !== this.stream))
+    // 宿主可能带外改写 srcObject；调用方主动驱动时以自家 stream 为唯一真值重新接管。
+    if (!this.stream || !this.hasVideo())
       return
 
-    this.container.srcObject = this.stream
-    void this.playMonitor.play()
+    const attached = this.container.srcObject !== this.stream
+    if (attached)
+      this.container.srcObject = this.stream
+    void this.playMonitor.play(attached)
   }
 
   /** Cancel media recovery that belongs to a transport that no longer exists. */

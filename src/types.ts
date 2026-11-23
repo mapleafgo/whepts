@@ -30,9 +30,11 @@ export interface WhepDiagnostic {
   playerId: number
   attemptId?: number
   state: State
-  operation: 'delete-session' | 'sample-flow'
-  phase: 'signaling' | 'connection'
-  elapsedMs: number
+  operation: 'delete-session' | 'sample-flow' | 'listener-error' | 'trickle-ice'
+  /** Only meaningful for network operations; omitted for listener failures. */
+  phase?: 'signaling' | 'connection'
+  /** Monotonic duration of the measured operation; omitted when nothing is timed. */
+  elapsedMs?: number
   reason: 'http-error' | 'timeout' | 'request-failed'
   httpStatus?: number
   /** Sanitized error name or HTTP context; never raw messages or payloads. */

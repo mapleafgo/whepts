@@ -17,6 +17,8 @@ const CODEC_PROBE_TIMEOUT_MS = 3000
 const VIDEO_TRACK_WAIT_MS = 5000
 const DISCONNECT_GRACE_MS = 5000
 const SESSION_DELETE_TIMEOUT_MS = 5000
+// 候选 PATCH 挂起不应拖住后续候选；超时只丢弃该批，会话继续。
+const CANDIDATE_PATCH_TIMEOUT_MS = 5000
 const RECONNECT_DELAYS_MS = [2000, 4000, 8000] as const
 
 let nextPlayerId = 0
@@ -345,13 +347,69 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
     this.notifyError(new WebRTCError(type, message, { phase, httpStatus, reason, ...(cause === undefined ? {} : { cause }) }))
   }
 
+  /**
+   * Dispatch one public event. Listeners are registered through `on`/`once` wrappers that
+   * catch host exceptions, so a failing listener neither stops the others nor fails playback.
+   */
   private notify<K extends keyof WhepEvents>(event: K, ...args: EventEmitter.EventArgs<WhepEvents, K>): void {
-    try {
-      this.emit(event, ...args)
+    this.emit(event, ...args)
+  }
+
+  private reportListenerFailure(event: string, error: unknown): void {
+    const cause = error instanceof Error ? error.name : 'unknown'
+    this.notifyDiagnostic({ operation: 'listener-error', reason: 'request-failed', cause })
+    console.warn('[WhepTS] Public event listener failed', { playerId: this.playerId, event, cause })
+  }
+
+  /** Wrap one listener so host exceptions are reported instead of interrupting dispatch. */
+  /** Wrappers are indexed per listener and context so one registration can be removed alone. */
+  private guardedListeners = new WeakMap<object, Map<unknown, (...values: unknown[]) => unknown>>()
+
+  private guardListener<K extends keyof WhepEvents>(event: K, listener: EventEmitter.EventListener<WhepEvents, K>, context?: unknown): EventEmitter.EventListener<WhepEvents, K> {
+    const target = context ?? this
+    const guarded = (...args: Parameters<EventEmitter.EventListener<WhepEvents, K>>): void => {
+      try {
+        // 与 emitter 一致：未指定 context 时以播放器为 this。
+        Reflect.apply(listener as (...values: unknown[]) => unknown, target, args)
+      }
+      catch (error) {
+        this.reportListenerFailure(String(event), error)
+      }
     }
-    catch {
-      console.warn('[WebRTCWhep] Public event listener failed', event)
-    }
+    const wrapper = guarded as EventEmitter.EventListener<WhepEvents, K>
+    const key = listener as object
+    const byContext = this.guardedListeners.get(key) ?? new Map<unknown, (...values: unknown[]) => unknown>()
+    byContext.set(context, guarded as (...values: unknown[]) => unknown)
+    this.guardedListeners.set(key, byContext)
+    return wrapper
+  }
+
+  private unwrapListener<K extends keyof WhepEvents>(listener: EventEmitter.EventListener<WhepEvents, K>, context?: unknown): EventEmitter.EventListener<WhepEvents, K> {
+    return (this.guardedListeners.get(listener as object)?.get(context) ?? listener) as EventEmitter.EventListener<WhepEvents, K>
+  }
+
+  /** Remove listeners through their original reference, not the internal wrapper. */
+  override off<K extends keyof WhepEvents>(event: K, listener: EventEmitter.EventListener<WhepEvents, K>, context?: unknown, once?: boolean): this {
+    return super.off(event, this.unwrapListener(listener, context), context, once) as this
+  }
+
+  override removeListener<K extends keyof WhepEvents>(event: K, listener: EventEmitter.EventListener<WhepEvents, K>, context?: unknown, once?: boolean): this {
+    return super.removeListener(event, this.unwrapListener(listener, context), context, once) as this
+  }
+
+  /** Register a guarded listener; `context` stays optional like the emitter's own API. */
+  override on<K extends keyof WhepEvents>(event: K, listener: EventEmitter.EventListener<WhepEvents, K>, context?: unknown): this {
+    return super.on(event, this.guardListener(event, listener, context), context) as this
+  }
+
+  /** `addListener` is an alias of `on`; guard it too so every registered listener is isolated. */
+  override addListener<K extends keyof WhepEvents>(event: K, listener: EventEmitter.EventListener<WhepEvents, K>, context?: unknown): this {
+    return this.on(event, listener, context)
+  }
+
+  /** `once` keeps the emitter's removal semantics because the wrapper itself is removed. */
+  override once<K extends keyof WhepEvents>(event: K, listener: EventEmitter.EventListener<WhepEvents, K>, context?: unknown): this {
+    return super.once(event, this.guardListener(event, listener, context), context) as this
   }
 
   private notifyError(error: WebRTCError): void {
@@ -407,14 +465,33 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
       while (!signal.aborted && this.queuedCandidates.length !== 0) {
         const batch = this.queuedCandidates
         this.queuedCandidates = []
-        const rotatedTag = await this.httpClient.sendLocalCandidates(session, offer, batch, signal)
-        if (rotatedTag !== null && this.session === session)
-          session.etag = rotatedTag
+        const startedAt = performance.now()
+        const deadline = new AbortController()
+        const batchSignal = AbortSignal.any([signal, deadline.signal])
+        const timer = setTimeout(() => deadline.abort(new DOMException('Candidate PATCH timed out', 'TimeoutError')), CANDIDATE_PATCH_TIMEOUT_MS)
+        try {
+          const rotatedTag = await this.httpClient.sendLocalCandidates(session, offer, batch, batchSignal)
+          if (rotatedTag !== null && this.session === session)
+            session.etag = rotatedTag
+        }
+        catch (error) {
+          // 连接已取消时静默退出；其他失败只丢该批并记录诊断。
+          if (signal.aborted)
+            return
+          // 单批失败不结束会话：记录诊断后继续发送后续候选。
+          const attemptId = this.attempt?.id
+          this.notifyDiagnostic({
+            operation: 'trickle-ice',
+            phase: 'signaling',
+            elapsedMs: performance.now() - startedAt,
+            reason: deadline.signal.aborted ? 'timeout' : 'request-failed',
+            ...(error instanceof WebRTCError && error.httpStatus !== undefined ? { httpStatus: error.httpStatus } : {}),
+          }, attemptId)
+        }
+        finally {
+          clearTimeout(timer)
+        }
       }
-    }
-    catch (error) {
-      if (!signal.aborted)
-        this.failSetup('signaling', error)
     }
     finally {
       if (this.candidateDrain === signal)

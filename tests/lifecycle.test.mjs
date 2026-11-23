@@ -280,7 +280,16 @@ test('audio-first streamless tracks wait for video and attach together', async (
   }
   Object.defineProperty(globalThis, 'MediaStream', { configurable: true, value: Stream })
   t.after(() => Reflect.deleteProperty(globalThis, 'MediaStream'))
-  const container = { srcObject: null, addEventListener() {}, removeEventListener() {} }
+  // 挂载新流后会显式调用 play()，桩需要提供可用的 play(paused) 行为。
+  const container = {
+    srcObject: null,
+    paused: true,
+    async play() {
+      this.paused = false
+    },
+    addEventListener() {},
+    removeEventListener() {},
+  }
   const player = new WebRTCWhep({ url: 'https://player.example/a', container, lazyLoad: false })
   t.after(() => player.close())
   await setImmediate()
@@ -312,6 +321,109 @@ test('audio-first streamless tracks wait for video and attach together', async (
   assert.deepEqual(container.srcObject.getTracks(), [audio, replacement])
   assert.deepEqual(failures, ['video-unavailable', 'video-unavailable'])
   assert.equal(player.state, 'running')
+})
+
+test('scrolling the element out of view must not report a playback stall', async (t) => {
+  let peer
+  class Peer {
+    connectionState = 'connected'
+    addTransceiver() {}
+    async createOffer() {
+      if (this.ontrack)
+        peer = this
+      return { sdp: 'v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:0\r\n' }
+    }
+
+    async setLocalDescription() {}
+    close() {}
+  }
+  Object.defineProperty(globalThis, 'RTCPeerConnection', { configurable: true, value: Peer })
+  t.after(() => Reflect.deleteProperty(globalThis, 'RTCPeerConnection'))
+  t.mock.method(globalThis, 'fetch', (_url, { method }) => method === 'POST' ? new Promise(() => {}) : Promise.resolve(new Response(null, { status: 204 })))
+  let report
+  class Observer {
+    constructor(callback) { report = callback }
+    observe() {}
+    disconnect() {}
+  }
+  Object.defineProperty(globalThis, 'IntersectionObserver', { configurable: true, value: Observer })
+  t.after(() => Reflect.deleteProperty(globalThis, 'IntersectionObserver'))
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'], now: 1000 })
+  const container = Object.assign(new EventTarget(), {
+    srcObject: null,
+    paused: true,
+    currentTime: 0,
+    async play() { this.paused = false },
+  })
+  const player = new WebRTCWhep({ url: 'https://player.example/a', container })
+  t.after(() => player.close())
+  const stalls = []
+  const errors = []
+  player.on('play:stalled', event => stalls.push(event.reason))
+  player.on('error', error => errors.push([error.phase, error.message]))
+  await setImmediate()
+  const stream = { getTracks: () => [{ kind: 'video' }] }
+  peer.onconnectionstatechange()
+  peer.ontrack({ streams: [stream] })
+  const show = ratio => report([{ isIntersecting: ratio > 0, intersectionRatio: ratio }])
+  show(1)
+  await setImmediate()
+  assert.equal(container.srcObject, stream)
+  container.currentTime = 5
+  // 滚出视口：播放被有意停止，不应被当成停滞。
+  show(0)
+  assert.equal(container.srcObject, null)
+  for (let i = 0; i < 20; i++) {
+    t.mock.timers.tick(1000)
+    await setImmediate()
+  }
+  assert.deepEqual(stalls, [])
+  assert.equal(player.state, 'running', JSON.stringify(errors))
+})
+
+test('the first stall sample after attaching only establishes a baseline', async (t) => {
+  let peer
+  class Peer {
+    connectionState = 'connected'
+    addTransceiver() {}
+    async createOffer() {
+      if (this.ontrack)
+        peer = this
+      return { sdp: 'v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:0\r\n' }
+    }
+
+    async setLocalDescription() {}
+    close() {}
+  }
+  Object.defineProperty(globalThis, 'RTCPeerConnection', { configurable: true, value: Peer })
+  t.after(() => Reflect.deleteProperty(globalThis, 'RTCPeerConnection'))
+  t.mock.method(globalThis, 'fetch', (_url, { method }) => method === 'POST' ? new Promise(() => {}) : Promise.resolve(new Response(null, { status: 204 })))
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'], now: 1000 })
+  const container = Object.assign(new EventTarget(), {
+    srcObject: null,
+    paused: true,
+    currentTime: 0,
+    getVideoPlaybackQuality: () => ({ totalVideoFrames: 10, droppedVideoFrames: 0 }),
+    async play() { this.paused = false },
+  })
+  const player = new WebRTCWhep({ url: 'https://player.example/a', container, lazyLoad: false })
+  t.after(() => player.close())
+  const stalls = []
+  player.on('play:stalled', event => stalls.push(event.reason))
+  await setImmediate()
+  peer.ontrack({ streams: [{ getTracks: () => [{ kind: 'video' }] }] })
+  await setImmediate()
+  // 刚挂载时时钟刚起步（几十毫秒），首轮不应判停滞。
+  container.currentTime = 0.06
+  await setImmediate()
+  assert.deepEqual(stalls, [])
+  // 之后 5 秒内确实不推进仍要报告。
+  container.currentTime = 0.07
+  for (let i = 0; i < 6; i++) {
+    t.mock.timers.tick(1000)
+    await setImmediate()
+  }
+  assert.equal(stalls.length, 1)
 })
 
 test('visibility changes respect the threshold and manual pause', async (t) => {
@@ -1339,17 +1451,21 @@ test('late PATCH completion cannot affect a replacement session', async (t) => {
       assert.deepEqual(tracks, [])
       const errors = []
       player.on('error', error => errors.push([player.state, error.phase, error.httpStatus]))
+      player.on('candidate', () => {
+        throw new Error('Observer failed')
+      })
+      // 候选 PATCH 失败只丢该批并记诊断，会话保持 running。
       t.mock.method(globalThis, 'fetch', async (_url, { method }) => {
         if (method === 'PATCH')
           throw new TypeError('Private network detail')
         return new Response(null, { status: 204 })
       })
-      player.on('candidate', () => {
-        throw new Error('Observer failed')
-      })
       assert.doesNotThrow(() => peer.onicecandidate({ candidate: { sdpMLineIndex: 0, candidate: 'candidate:current' } }))
       await setImmediate()
-      assert.deepEqual(errors, [['failed', 'signaling', undefined]])
+      await setImmediate()
+      assert.deepEqual(errors, [])
+      assert.equal(player.state, 'running')
+      assert.deepEqual(diagnostics.filter(record => record.operation === 'trickle-ice').map(record => record.reason), ['request-failed'])
     })
   }
 })
@@ -1947,6 +2063,380 @@ test('a hung signaling request times out without a retry', async (t) => {
   assert.equal(errors[0].reason, 'setup-timeout')
   t.mock.timers.tick(15000)
   assert.equal(fetch.mock.callCount(), 1)
+})
+
+test('a throwing listener cannot stop later listeners of the same event', async (t) => {
+  const diagnostics = []
+  const player = new WebRTCWhep({
+    url: 'https://player.example/a',
+    container: { srcObject: null, addEventListener() {}, removeEventListener() {} },
+    lazyLoad: false,
+    onDiagnostic: record => diagnostics.push(record),
+  })
+  t.after(() => player.close())
+  const seen = []
+  player.on('state:change', () => {
+    throw new Error('Private listener detail')
+  })
+  player.on('state:change', ({ to }) => seen.push(to))
+  await setImmediate()
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  player.updateUrl('https://player.example/b')
+  await setImmediate()
+  assert.ok(seen.includes('running'), JSON.stringify(seen))
+  const listener = diagnostics.filter(record => record.operation === 'listener-error')
+  assert.ok(listener.length >= 1, JSON.stringify(diagnostics))
+  assert.equal(listener[0].reason, 'request-failed')
+  assert.equal(listener[0].cause, 'Error')
+  assert.ok(!JSON.stringify(diagnostics).includes('Private listener detail'))
+})
+
+test('removing a listener keeps other registrations of the same function', async (t) => {
+  const player = new WebRTCWhep({
+    url: 'https://player.example/a',
+    container: { srcObject: null, addEventListener() {}, removeEventListener() {} },
+    lazyLoad: false,
+  })
+  t.after(() => player.close())
+  const first = { calls: 0 }
+  const second = { calls: 0 }
+  const listener = function () {
+    this.calls++
+  }
+  player.on('state:change', listener, first)
+  player.on('state:change', listener, second)
+  await setImmediate()
+  assert.ok(first.calls > 0 && second.calls > 0, JSON.stringify([first.calls, second.calls]))
+  player.off('state:change', listener, first)
+  const firstBefore = first.calls
+  const secondBefore = second.calls
+  player.updateUrl('https://player.example/b')
+  await setImmediate()
+  assert.equal(first.calls, firstBefore, 'removed registration must not run again')
+  assert.ok(second.calls > secondBefore, 'other registration must keep running')
+})
+
+test('closing inside a throwing listener leaves the player consistent', async (t) => {
+  const diagnostics = []
+  const player = new WebRTCWhep({
+    url: 'https://player.example/a',
+    container: { srcObject: null, addEventListener() {}, removeEventListener() {} },
+    lazyLoad: false,
+    onDiagnostic: record => diagnostics.push(record),
+  })
+  t.after(() => player.close())
+  const seen = []
+  player.on('state:change', ({ to }) => {
+    seen.push(to)
+    if (to === 'running') {
+      player.close()
+      throw new Error('Private listener detail')
+    }
+  })
+  player.on('state:change', ({ to }) => seen.push(`after:${to}`))
+  await setImmediate()
+  assert.equal(player.state, 'closed')
+  // 派发按快照继续：关闭产生的 closed 通知先派发完，再回到已开始的 running 派发。
+  assert.deepEqual(seen, ['running', 'closed', 'after:closed', 'after:running'])
+  assert.equal(diagnostics.filter(record => record.operation === 'listener-error').length, 1)
+})
+
+test('listener context is preserved when a binding is provided', async (t) => {
+  const player = new WebRTCWhep({
+    url: 'https://player.example/a',
+    container: { srcObject: null, addEventListener() {}, removeEventListener() {} },
+    lazyLoad: false,
+  })
+  t.after(() => player.close())
+  const context = { changes: 0, self: null }
+  player.on('state:change', function () {
+    this.changes++
+    this.self = this
+  }, context)
+  await setImmediate()
+  assert.ok(context.changes > 0, 'listener must run with the provided context')
+  assert.equal(context.self, context)
+})
+
+test('removing a listener stops it from being called', async (t) => {
+  const player = new WebRTCWhep({
+    url: 'https://player.example/a',
+    container: { srcObject: null, addEventListener() {}, removeEventListener() {} },
+    lazyLoad: false,
+  })
+  t.after(() => player.close())
+  let calls = 0
+  const listener = () => {
+    calls++
+  }
+  player.on('state:change', listener)
+  await setImmediate()
+  const before = calls
+  assert.ok(before > 0, String(before))
+  player.off('state:change', listener)
+  player.updateUrl('https://player.example/b')
+  await setImmediate()
+  assert.equal(calls, before, 'removed listener must not run again')
+})
+
+test('listeners registered through addListener are isolated too', async (t) => {
+  const diagnostics = []
+  const player = new WebRTCWhep({
+    url: 'https://player.example/a',
+    container: { srcObject: null, addEventListener() {}, removeEventListener() {} },
+    lazyLoad: false,
+    onDiagnostic: record => diagnostics.push(record),
+  })
+  t.after(() => player.close())
+  const seen = []
+  player.addListener('state:change', () => {
+    seen.push('first')
+    throw new Error('Private listener detail')
+  })
+  player.addListener('state:change', ({ to }) => seen.push(to))
+  await setImmediate()
+  assert.ok(seen.includes('first'), JSON.stringify(seen))
+  assert.ok(seen.includes('running'), JSON.stringify(seen))
+  assert.equal(diagnostics.filter(record => record.operation === 'listener-error').length, seen.filter(value => value === 'first').length)
+})
+
+test('a throwing once listener is isolated like a persistent one', async (t) => {
+  const diagnostics = []
+  const player = new WebRTCWhep({
+    url: 'https://player.example/a',
+    container: { srcObject: null, addEventListener() {}, removeEventListener() {} },
+    lazyLoad: false,
+    onDiagnostic: record => diagnostics.push(record),
+  })
+  t.after(() => player.close())
+  const seen = []
+  player.on('state:change', () => {
+    seen.push('once')
+    throw new Error('Private listener detail')
+  })
+  player.on('state:change', ({ to }) => seen.push(to))
+  await setImmediate()
+  assert.ok(seen.includes('running'), JSON.stringify(seen))
+  assert.ok(seen.includes('once'), JSON.stringify(seen))
+  assert.equal(diagnostics.filter(record => record.operation === 'listener-error').length, seen.filter(value => value === 'once').length, JSON.stringify(diagnostics))
+})
+
+test('a hung candidate PATCH drops only its batch and keeps the session', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 })
+  let peer
+  const patches = []
+  const diagnostics = []
+  Object.defineProperty(globalThis, 'RTCSessionDescription', { configurable: true, value: class {} })
+  t.after(() => Reflect.deleteProperty(globalThis, 'RTCSessionDescription'))
+  const sdp = 'v=0\r\na=ice-ufrag:session\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:0\r\na=ice-ufrag:media\r\n'
+  class Peer {
+    connectionState = 'connected'
+    addTransceiver() {}
+    async createOffer() { return { type: 'offer', sdp } }
+    async setLocalDescription() {}
+    async setRemoteDescription() {
+      if (this.ontrack)
+        peer = this
+    }
+
+    close() {}
+  }
+  Object.defineProperty(globalThis, 'RTCPeerConnection', { configurable: true, value: Peer })
+  t.after(() => Reflect.deleteProperty(globalThis, 'RTCPeerConnection'))
+  t.mock.method(globalThis, 'fetch', (url, { method, signal, body }) => {
+    if (method === 'POST')
+      return Promise.resolve(new Response(sdp, { status: 201, headers: { Location: `${new URL(url).pathname}/session`, ETag: '"tag-1"' } }))
+    if (method === 'PATCH') {
+      patches.push(body)
+      if (patches.length === 1)
+        return new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }))
+      return Promise.resolve(new Response(null, { status: 204 }))
+    }
+    return Promise.resolve(new Response(null, { status: 204 }))
+  })
+  const player = new WebRTCWhep({
+    url: 'https://player.example/a',
+    container: { srcObject: null, addEventListener() {}, removeEventListener() {} },
+    lazyLoad: false,
+    onDiagnostic: record => diagnostics.push(record),
+  })
+  t.after(() => player.close())
+  await setImmediate()
+  peer.onicecandidate({ candidate: { sdpMid: '0', candidate: 'candidate:first' } })
+  await setImmediate()
+  assert.equal(patches.length, 1)
+  peer.onicecandidate({ candidate: { sdpMid: '0', candidate: 'candidate:second' } })
+  t.mock.timers.tick(5000)
+  await setImmediate()
+  // 超时只丢弃该批：会话仍在，后续候选照常发送。
+  assert.equal(player.state, 'running')
+  assert.equal(diagnostics.filter(record => record.operation === 'trickle-ice').length, 1)
+  assert.equal(diagnostics.at(-1).reason, 'timeout')
+  assert.equal(diagnostics.at(-1).phase, 'signaling')
+  t.mock.timers.tick(5000)
+  await setImmediate()
+  assert.ok(patches.length >= 2, JSON.stringify(patches))
+  assert.ok(patches.at(-1).includes('candidate:second'), String(patches.at(-1)))
+  assert.equal(player.state, 'running')
+})
+test('a reclaimed element is not detached by a pause triggered by visibility', async (t) => {
+  let peer
+  class Peer {
+    connectionState = 'connected'
+    addTransceiver() {}
+    async createOffer() {
+      if (this.ontrack)
+        peer = this
+      return { sdp: 'v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:0\r\n' }
+    }
+
+    async setLocalDescription() {}
+    close() {}
+  }
+  Object.defineProperty(globalThis, 'RTCPeerConnection', { configurable: true, value: Peer })
+  t.after(() => Reflect.deleteProperty(globalThis, 'RTCPeerConnection'))
+  t.mock.method(globalThis, 'fetch', (_url, { method }) => method === 'POST' ? new Promise(() => {}) : Promise.resolve(new Response(null, { status: 204 })))
+  let report
+  class Observer {
+    constructor(callback) { report = callback }
+    observe() {}
+    disconnect() {}
+  }
+  Object.defineProperty(globalThis, 'IntersectionObserver', { configurable: true, value: Observer })
+  t.after(() => Reflect.deleteProperty(globalThis, 'IntersectionObserver'))
+  const container = Object.assign(new EventTarget(), {
+    srcObject: null,
+    paused: true,
+    currentTime: 0,
+    async play() { this.paused = false },
+  })
+  const player = new WebRTCWhep({ url: 'https://player.example/a', container })
+  t.after(() => player.close())
+  await setImmediate()
+  const stream = { getTracks: () => [{ kind: 'video' }] }
+  peer.ontrack({ streams: [stream] })
+  const show = ratio => report([{ isIntersecting: ratio > 0, intersectionRatio: ratio }])
+  show(1)
+  await setImmediate()
+  assert.equal(container.srcObject, stream)
+  // 宿主把元素换成自己的流：卸载动作不得清掉宿主的流。
+  const hostStream = {}
+  container.srcObject = hostStream
+  show(0)
+  assert.equal(container.srcObject, hostStream)
+  show(1)
+  assert.equal(container.srcObject, stream)
+})
+
+test('switching source reattaches the new stream and starts it explicitly', async (t) => {
+  let peer
+  class Peer {
+    connectionState = 'connected'
+    addTransceiver() {}
+    async createOffer() {
+      if (this.ontrack)
+        peer = this
+      return { sdp: 'v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:0\r\n' }
+    }
+
+    async setLocalDescription() {}
+    close() {}
+  }
+  Object.defineProperty(globalThis, 'RTCPeerConnection', { configurable: true, value: Peer })
+  t.after(() => Reflect.deleteProperty(globalThis, 'RTCPeerConnection'))
+  t.mock.method(globalThis, 'fetch', (_url, { method }) => method === 'POST' ? new Promise(() => {}) : Promise.resolve(new Response(null, { status: 204 })))
+  const attachments = []
+  let plays = 0
+  const element = {
+    _src: null,
+    paused: true,
+    currentTime: 0,
+    async play() {
+      plays++
+      this.paused = false
+    },
+    addEventListener() {},
+    removeEventListener() {},
+  }
+  Object.defineProperty(element, 'srcObject', {
+    get() {
+      return this._src
+    },
+    set(value) {
+      attachments.push(value === null ? null : 'stream')
+      this._src = value
+      // 规范的 load algorithm 会把 paused 置回 true。
+      this.paused = true
+    },
+  })
+  const player = new WebRTCWhep({ url: 'https://player.example/a', container: element, lazyLoad: false })
+  t.after(() => player.close())
+  await setImmediate()
+  peer.ontrack({ streams: [{ getTracks: () => [{ kind: 'video' }] }] })
+  await setImmediate()
+  assert.equal(plays, 1)
+  player.updateUrl('https://player.example/b')
+  await setImmediate()
+  const mark = attachments.length
+  const playsBefore = plays
+  peer.ontrack({ streams: [{ getTracks: () => [{ kind: 'video' }] }] })
+  await setImmediate()
+  // 新流只需一次赋值，并且必须显式调用 play() 才能真正开始解码。
+  assert.deepEqual(attachments.slice(mark).filter(value => value !== null), ['stream'], JSON.stringify(attachments))
+  assert.equal(plays, playsBefore + 1)
+  assert.equal(player.state, 'running')
+})
+
+test('reclaiming the element after a host takeover resumes playback', async (t) => {
+  let peer
+  class Peer {
+    connectionState = 'connected'
+    addTransceiver() {}
+    async createOffer() {
+      if (this.ontrack)
+        peer = this
+      return { sdp: 'v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:0\r\n' }
+    }
+
+    async setLocalDescription() {}
+    close() {}
+  }
+  Object.defineProperty(globalThis, 'RTCPeerConnection', { configurable: true, value: Peer })
+  t.after(() => Reflect.deleteProperty(globalThis, 'RTCPeerConnection'))
+  t.mock.method(globalThis, 'fetch', (_url, { method }) => method === 'POST' ? new Promise(() => {}) : Promise.resolve(new Response(null, { status: 204 })))
+  let plays = 0
+  const container = Object.assign(new EventTarget(), {
+    srcObject: null,
+    paused: true,
+    currentTime: 0,
+    async play() {
+      plays++
+      this.paused = false
+    },
+  })
+  const player = new WebRTCWhep({ url: 'https://player.example/a', container, lazyLoad: false })
+  t.after(() => player.close())
+  await setImmediate()
+  const stream = { getTracks: () => [{ kind: 'video' }] }
+  peer.ontrack({ streams: [stream] })
+  await setImmediate()
+  assert.equal(container.srcObject, stream)
+  assert.equal(plays, 1)
+  // 宿主接管：播放器不回写。
+  container.srcObject = {}
+  player.pause()
+  assert.deepEqual(Object.keys(container.srcObject), [])
+  // 宿主归还后由调用方恢复：重新接管，并对新挂载的流显式 play()。
+  container.srcObject = null
+  player.resume()
+  assert.equal(container.srcObject, stream)
+  assert.equal(plays, 2)
+  // 元素真的暂停后，再驱动仍会重新 play()。
+  container.paused = true
+  player.pause()
+  player.resume()
+  assert.equal(plays, 3)
+  assert.equal(player.state, 'running')
 })
 
 test('public notifications do not control the active session', async (t) => {

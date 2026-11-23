@@ -83,6 +83,8 @@ ICE 重启（PATCH 返回 `200` + 新 `ETag`）受支持，后续候选使用新
 | `error` | `WebRTCError`，使用 `type` 分类；`phase` 和 `httpStatus` 在适用时提供；建连超时带有 `reason: 'setup-timeout'`。 |
 | `restart`、`close` | 已安排同源重连、本地关闭完成。 |
 
+监听器语义与 DOM 事件派发一致：同一个事件的通知按注册时的快照依次调用，某个监听器抛错不会中断其余监听器，也不会让播放失败；异常通过 `onDiagnostic` 的 `listener-error` 上报（仅含脱敏错误名）。监听器内调用 `close()` 或 `updateUrl()` 时，已经开始的派发仍会完成，之后的旧通知被抑制。`on`、`once`、`addListener` 与 `off`、`removeListener` 使用同一份注册表，第三次参数 `context` 决定监听器内的 `this`。
+
 当前导出的 `ErrorTypes` 包含 `SIGNAL_ERROR`、`STATE_ERROR`、`REQUEST_ERROR`、`NOT_FOUND_ERROR`、`VIDEO_ERROR` 和 `OTHER_ERROR`。HTTP 失败统一使用 `REQUEST_ERROR`，具体状态码由 `httpStatus` 表达；草案 §4.1 要求播放器不把状态码映射到具体原因。`NOT_FOUND_ERROR` 仅为保持导出兼容而保留。
 
 ## 开发与验证
