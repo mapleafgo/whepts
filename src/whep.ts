@@ -1,4 +1,5 @@
 import type { WhepSession } from './core/http.js'
+import type { ParsedOffer } from './utils/sdp.js'
 import type { ErrorPhase } from './errors.js'
 import type { Conf, State, WhepDiagnostic, WhepEvents } from './types.js'
 import { EventEmitter } from 'eventemitter3'
@@ -361,8 +362,7 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
     console.warn('[WhepTS] Public event listener failed', { playerId: this.playerId, event, cause })
   }
 
-  /** Wrap one listener so host exceptions are reported instead of interrupting dispatch. */
-  /** Wrappers are indexed per listener and context so one registration can be removed alone. */
+  /** Wrappers indexed per listener and context so each registration can be removed alone. */
   private guardedListeners = new WeakMap<object, Map<unknown, (...values: unknown[]) => unknown>>()
 
   private guardListener<K extends keyof WhepEvents>(event: K, listener: EventEmitter.EventListener<WhepEvents, K>, context?: unknown): EventEmitter.EventListener<WhepEvents, K> {
@@ -471,36 +471,46 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
       while (!signal.aborted && this.queuedCandidates.length !== 0) {
         const batch = this.queuedCandidates
         this.queuedCandidates = []
-        const startedAt = performance.now()
-        const deadline = new AbortController()
-        const batchSignal = AbortSignal.any([signal, deadline.signal])
-        const timer = setTimeout(() => deadline.abort(new DOMException('Candidate PATCH timed out', 'TimeoutError')), CANDIDATE_PATCH_TIMEOUT_MS)
-        try {
-          const rotatedTag = await this.httpClient.sendLocalCandidates(session, offer, batch, batchSignal)
-          if (rotatedTag !== null && this.session === session)
-            session.etag = rotatedTag
-        }
-        catch (error) {
-          // 连接已取消时静默退出；其他失败只丢该批并记录诊断。
-          if (signal.aborted)
-            return
-          // 单批失败不结束会话：记录诊断后继续发送后续候选。
-          this.notifyDiagnostic({
-            operation: 'trickle-ice',
-            phase: 'signaling',
-            elapsedMs: performance.now() - startedAt,
-            reason: deadline.signal.aborted ? 'timeout' : 'request-failed',
-            ...(error instanceof WebRTCError && error.httpStatus !== undefined ? { httpStatus: error.httpStatus } : {}),
-          }, attemptId)
-        }
-        finally {
-          clearTimeout(timer)
-        }
+        if (!await this.sendCandidateBatch(session, offer, batch, signal, attemptId))
+          return
       }
     }
     finally {
       if (this.candidateDrain === signal)
         this.candidateDrain = undefined
+    }
+  }
+
+  /**
+   * Send one candidate batch with its own deadline.
+   * Returns false only when the attempt was aborted; other failures are reported and dropped.
+   */
+  private async sendCandidateBatch(session: WhepSession, offer: ParsedOffer, batch: RTCIceCandidate[], signal: AbortSignal, attemptId?: number): Promise<boolean> {
+    const startedAt = performance.now()
+    const deadline = new AbortController()
+    const batchSignal = AbortSignal.any([signal, deadline.signal])
+    const timer = setTimeout(() => deadline.abort(new DOMException('Candidate PATCH timed out', 'TimeoutError')), CANDIDATE_PATCH_TIMEOUT_MS)
+    try {
+      const rotatedTag = await this.httpClient.sendLocalCandidates(session, offer, batch, batchSignal)
+      if (rotatedTag !== null && this.session === session)
+        session.etag = rotatedTag
+      return true
+    }
+    catch (error) {
+      // 连接已取消时静默退出；其他失败只丢该批并记录诊断。
+      if (signal.aborted)
+        return false
+      this.notifyDiagnostic({
+        operation: 'trickle-ice',
+        phase: 'signaling',
+        elapsedMs: performance.now() - startedAt,
+        reason: deadline.signal.aborted ? 'timeout' : 'request-failed',
+        ...(error instanceof WebRTCError && error.httpStatus !== undefined ? { httpStatus: error.httpStatus } : {}),
+      }, attemptId)
+      return true
+    }
+    finally {
+      clearTimeout(timer)
     }
   }
 

@@ -55,9 +55,9 @@ export class PlayMonitor {
   }
 
   /**
-   * 尝试播放媒体
+   * Start playback on the element.
+   * `freshStream` forces a real play() call because assigning srcObject restarts loading.
    */
-  /** Start playback on the element. `freshStream` means the element was just re-attached. */
   async play({ freshStream = false }: { freshStream?: boolean } = {}): Promise<void> {
     this.stopMonitoring()
     const generation = this.generation

@@ -2663,7 +2663,7 @@ test('stats rejection reports a request-failed diagnostic instead of a stall', a
   assert.equal(player.state, 'running')
   assert.ok(diagnostics.length >= 1)
   const { playerId, attemptId, state, ...rest } = diagnostics.at(-1)
-  assert.deepEqual(rest, { operation: 'sample-flow', phase: 'connection', reason: 'request-failed', elapsedMs: 0, cause: 'InvalidStateError' })
+  assert.deepEqual(rest, { operation: 'sample-flow', phase: 'connection', reason: 'request-failed', cause: 'InvalidStateError' })
   assert.equal(attemptId, 1)
   assert.equal(state, 'running')
   assert.ok(Number.isInteger(playerId))
