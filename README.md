@@ -111,7 +111,7 @@ pnpm exec tsc --noEmit
 npm run build:debug
 ```
 
-代码检查用 oxlint（`.oxlintrc.json`），格式化用 oxfmt（`.oxfmtrc.json`）；`npm run lint:fix` 与 `npm run format` 分别自动修复。生产构建仍会剥离全部 `console` 与 `debugger`。
+代码检查用 oxlint，格式化用 oxfmt，均使用工具默认配置，不维护项目级规则文件；`npm run lint:fix` 与 `npm run format` 分别自动修复。生产构建仍会剥离全部 `console` 与 `debugger`。
 
 排查问题时运行 `npm run build:debug`，使用本地构建并在 DevTools 控制台开启 Verbose。调试构建保留源码映射，打印脱敏的状态变化、错误阶段、HTTP 状态和清理／采样诊断。生产构建移除控制台日志，应用仍可使用 `error` 和 `onDiagnostic`。
 

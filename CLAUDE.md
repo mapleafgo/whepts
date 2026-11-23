@@ -179,7 +179,7 @@ Runtime dependencies:
 
 ## Code Style
 
-- oxlint rules in `.oxlintrc.json`; formatting in `.oxfmtrc.json`
+- oxlint and oxfmt run with their default options; no project-level rule files
 - pnpm as package manager
 - TypeScript path resolution enabled
 - No formatting of markdown files

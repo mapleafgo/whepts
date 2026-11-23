@@ -24,7 +24,7 @@
 
 ### Formatting
 
-- Formatting is handled by oxfmt (`.oxfmtrc.json`); linting by oxlint (`.oxlintrc.json`)
+- Formatting is handled by oxfmt with its default options; linting by oxlint with its default rules
 - Run `npm run format` and `npm run lint:fix` before committing
 - No manual formatting required - let the tools handle it
 

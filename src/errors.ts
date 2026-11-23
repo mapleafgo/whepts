@@ -1,14 +1,14 @@
 /**
  * 错误类型
  */
-export type ErrorType = string
+export type ErrorType = string;
 
-export type ErrorPhase = 'configuration' | 'signaling' | 'connection'
+export type ErrorPhase = "configuration" | "signaling" | "connection";
 
 interface WebRTCErrorOptions extends ErrorOptions {
-  phase?: ErrorPhase
-  reason?: 'setup-timeout'
-  httpStatus?: number
+  phase?: ErrorPhase;
+  reason?: "setup-timeout";
+  httpStatus?: number;
 }
 
 /**
@@ -23,29 +23,29 @@ interface WebRTCErrorOptions extends ErrorOptions {
  * 注意：流连接断开已由 `flow:stalled` 事件独立处理，不作为错误类型。
  */
 export const ErrorTypes = {
-  SIGNAL_ERROR: 'SignalError', // 信令异常
-  STATE_ERROR: 'StateError', // 状态异常
-  REQUEST_ERROR: 'RequestError', // 请求异常
-  NOT_FOUND_ERROR: 'NotFoundError', // 没有找到
-  VIDEO_ERROR: 'VideoError', // 播放容器错误
-  OTHER_ERROR: 'OtherError', // 其他错误
-}
+  SIGNAL_ERROR: "SignalError", // 信令异常
+  STATE_ERROR: "StateError", // 状态异常
+  REQUEST_ERROR: "RequestError", // 请求异常
+  NOT_FOUND_ERROR: "NotFoundError", // 没有找到
+  VIDEO_ERROR: "VideoError", // 播放容器错误
+  OTHER_ERROR: "OtherError", // 其他错误
+};
 
 /**
  * 错误
  */
 export class WebRTCError extends Error {
-  type: ErrorType
+  type: ErrorType;
 
-  declare readonly phase?: ErrorPhase
-  declare readonly reason?: 'setup-timeout'
-  declare readonly httpStatus?: number
+  declare readonly phase?: ErrorPhase;
+  declare readonly reason?: "setup-timeout";
+  declare readonly httpStatus?: number;
 
   constructor(type: ErrorType, message: string, options?: WebRTCErrorOptions) {
-    super(message, options)
-    this.type = type
-    if (options?.reason !== undefined) this.reason = options.reason
-    if (options?.phase !== undefined) this.phase = options.phase
-    if (options?.httpStatus !== undefined) this.httpStatus = options.httpStatus
+    super(message, options);
+    this.type = type;
+    if (options?.reason !== undefined) this.reason = options.reason;
+    if (options?.phase !== undefined) this.phase = options.phase;
+    if (options?.httpStatus !== undefined) this.httpStatus = options.httpStatus;
   }
 }

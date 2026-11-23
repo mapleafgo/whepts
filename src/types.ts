@@ -1,83 +1,90 @@
-import type { EventEmitter } from 'eventemitter3'
-import type { WebRTCError } from './errors.js'
+import type { EventEmitter } from "eventemitter3";
+import type { WebRTCError } from "./errors.js";
 
 /**
  * Configuration interface for WebRTCWhep.
  */
 export interface Conf {
   /** Absolute URL of the WHEP endpoint */
-  url: string
+  url: string;
   /** Media player container */
-  container: HTMLMediaElement
+  container: HTMLMediaElement;
   /** Username for authentication */
-  user?: string
+  user?: string;
   /** Password for authentication */
-  pass?: string
+  pass?: string;
   /** Token for authentication */
-  token?: string
+  token?: string;
   /** ice server list */
-  iceServers?: RTCIceServer[]
+  iceServers?: RTCIceServer[];
   /** Send candidates incrementally, or wait and include them in the offer. Default: trickle. */
-  iceMode?: 'trickle' | 'complete'
+  iceMode?: "trickle" | "complete";
   /** Enable lazy loading (auto pause/resume when video goes off-screen). Default: true */
-  lazyLoad?: boolean
+  lazyLoad?: boolean;
   /** Observe sanitized operational failures without changing player state. */
-  onDiagnostic?: (diagnostic: WhepDiagnostic) => void
+  onDiagnostic?: (diagnostic: WhepDiagnostic) => void;
 }
 
 /** Best-effort diagnostics for operations outside the playback error path. */
 export interface WhepDiagnostic {
-  playerId: number
-  attemptId?: number
-  state: State
-  operation: 'delete-session' | 'sample-flow' | 'listener-error' | 'trickle-ice'
+  playerId: number;
+  attemptId?: number;
+  state: State;
+  operation: "delete-session" | "sample-flow" | "listener-error" | "trickle-ice";
   /** Only meaningful for network operations; omitted for listener failures. */
-  phase?: 'signaling' | 'connection'
+  phase?: "signaling" | "connection";
   /** Monotonic duration of the measured operation; omitted when nothing is timed. */
-  elapsedMs?: number
-  reason: 'http-error' | 'timeout' | 'request-failed'
-  httpStatus?: number
+  elapsedMs?: number;
+  reason: "http-error" | "timeout" | "request-failed";
+  httpStatus?: number;
   /** Sanitized error name or HTTP context; never raw messages or payloads. */
-  cause?: string
+  cause?: string;
 }
 
 /**
  * Event types emitted by WebRTCWhep
  */
 export interface WhepEvents {
-  'codecs:detected': (codecs: string[]) => void
-  'state:change': (payload: { from: State; to: State }) => void
-  candidate: (candidate: RTCIceCandidate) => void
-  track: (evt: RTCTrackEvent) => void
-  'play:success': (payload: { muted: boolean }) => void
-  'play:failed': (payload: {
-    code: 'autoplay-blocked' | 'video-unavailable' | 'element-recovery-exhausted' | 'playback-error'
-    reason: string
-    muted: boolean
-  }) => void
-  'play:stalled': (payload: { reason: string }) => void
-  'flow:stalled': (payload: { reason: string }) => void
-  error: (err: WebRTCError) => void
-  close: () => void
-  restart: () => void
+  "codecs:detected": (codecs: string[]) => void;
+  "state:change": (payload: { from: State; to: State }) => void;
+  candidate: (candidate: RTCIceCandidate) => void;
+  track: (evt: RTCTrackEvent) => void;
+  "play:success": (payload: { muted: boolean }) => void;
+  "play:failed": (payload: {
+    code:
+      | "autoplay-blocked"
+      | "video-unavailable"
+      | "element-recovery-exhausted"
+      | "playback-error";
+    reason: string;
+    muted: boolean;
+  }) => void;
+  "play:stalled": (payload: { reason: string }) => void;
+  "flow:stalled": (payload: { reason: string }) => void;
+  error: (err: WebRTCError) => void;
+  close: () => void;
+  restart: () => void;
 }
 
 /**
  * State type for WebRTCWhep.
  */
-export type State = 'getting_codecs' | 'running' | 'restarting' | 'closed' | 'failed'
+export type State = "getting_codecs" | "running" | "restarting" | "closed" | "failed";
 
 /** Extend RTCConfiguration to include experimental properties */
 declare global {
   interface RTCConfiguration {
-    sdpSemantics?: 'plan-b' | 'unified-plan'
+    sdpSemantics?: "plan-b" | "unified-plan";
   }
 
   interface RTCIceServer {
-    credentialType?: 'password'
+    credentialType?: "password";
   }
 }
 
-type MediaEvent = 'play:failed' | 'play:success' | 'play:stalled' | 'flow:stalled'
+type MediaEvent = "play:failed" | "play:success" | "play:stalled" | "flow:stalled";
 
-export type MediaNotifier = <K extends MediaEvent>(event: K, ...args: EventEmitter.EventArgs<WhepEvents, K>) => void
+export type MediaNotifier = <K extends MediaEvent>(
+  event: K,
+  ...args: EventEmitter.EventArgs<WhepEvents, K>
+) => void;
