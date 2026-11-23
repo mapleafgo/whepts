@@ -44,7 +44,7 @@ export class PlayMonitor {
     this.scheduler = scheduler
 
     // 设置 video 元素错误监听器（保存引用以便在 destroy 时移除）
-    this.container.addEventListener('error', this.handleVideoError = () => this.onVideoError())
+    this.container.addEventListener('error', (this.handleVideoError = () => this.onVideoError()))
   }
 
   /**
@@ -72,10 +72,8 @@ export class PlayMonitor {
 
     try {
       await this.container.play()
-    }
-    catch (error) {
-      if (!isCurrent())
-        return
+    } catch (error) {
+      if (!isCurrent()) return
       const blocked = error instanceof DOMException && error.name === 'NotAllowedError'
       this.options.notify('play:failed', {
         code: blocked ? 'autoplay-blocked' : 'playback-error',
@@ -85,12 +83,10 @@ export class PlayMonitor {
       return
     }
 
-    if (!isCurrent())
-      return
+    if (!isCurrent()) return
     this.startMonitoring()
     this.verificationTimer = setTimeout(() => {
-      if (isCurrent())
-        this.verifyPlayback()
+      if (isCurrent()) this.verifyPlayback()
     }, STARTUP_VERIFICATION_MS)
     this.options.notify('play:success', { muted: this.container.muted })
   }
@@ -199,8 +195,7 @@ export class PlayMonitor {
 
   private onVideoError(): void {
     const source = this.activeSource
-    if (!source || source !== this.container.srcObject || this.recovering)
-      return
+    if (!source || source !== this.container.srcObject || this.recovering) return
 
     this.stopMonitoring()
     if (this.container.error?.code !== 3) {
@@ -213,7 +208,11 @@ export class PlayMonitor {
     this.scheduleRecovery(source, this.generation, 3)
   }
 
-  private scheduleRecovery(source: NonNullable<HTMLMediaElement['srcObject']>, generation: number, remaining: number): void {
+  private scheduleRecovery(
+    source: NonNullable<HTMLMediaElement['srcObject']>,
+    generation: number,
+    remaining: number,
+  ): void {
     // 让元素有时间释放解码资源，再重新挂载同一连接的流。
     this.recoveryTimer = setTimeout(() => {
       this.recoveryTimer = undefined
@@ -221,26 +220,25 @@ export class PlayMonitor {
     }, RECOVERY_DELAY_MS)
   }
 
-  private async recover(source: NonNullable<HTMLMediaElement['srcObject']>, generation: number, remaining: number): Promise<void> {
+  private async recover(
+    source: NonNullable<HTMLMediaElement['srcObject']>,
+    generation: number,
+    remaining: number,
+  ): Promise<void> {
     const current = (): boolean => generation === this.generation && this.container.srcObject === source
-    if (!current())
-      return
+    if (!current()) return
 
     try {
       this.container.srcObject = null
       this.container.srcObject = source
       await this.container.play()
-    }
-    catch (error) {
-      if (!current())
-        return
+    } catch (error) {
+      if (!current()) return
       if (error instanceof DOMException && error.name === 'NotAllowedError') {
         this.reportRecoveryFailure('autoplay-blocked', 'Autoplay requires user interaction')
-      }
-      else if (remaining > 1) {
+      } else if (remaining > 1) {
         this.scheduleRecovery(source, generation, remaining - 1)
-      }
-      else {
+      } else {
         this.reportRecoveryFailure('element-recovery-exhausted', 'Media element recovery attempts were exhausted')
       }
       return
@@ -252,7 +250,10 @@ export class PlayMonitor {
     }
   }
 
-  private reportRecoveryFailure(code: 'playback-error' | 'autoplay-blocked' | 'element-recovery-exhausted', reason: string): void {
+  private reportRecoveryFailure(
+    code: 'playback-error' | 'autoplay-blocked' | 'element-recovery-exhausted',
+    reason: string,
+  ): void {
     this.stopMonitoring()
     this.options.notify('play:failed', { code, reason, muted: this.container.muted })
   }

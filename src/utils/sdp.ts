@@ -24,14 +24,11 @@ export class SdpUtils {
       if (line.startsWith('m=')) {
         section = { description: line.slice(2) }
         offer.media.push(section)
-      }
-      else if (line.startsWith('a=ice-ufrag:')) {
-        (section ?? offer).iceUfrag = line.slice('a=ice-ufrag:'.length)
-      }
-      else if (line.startsWith('a=ice-pwd:')) {
-        (section ?? offer).icePwd = line.slice('a=ice-pwd:'.length)
-      }
-      else if (section && line.startsWith('a=mid:')) {
+      } else if (line.startsWith('a=ice-ufrag:')) {
+        ;(section ?? offer).iceUfrag = line.slice('a=ice-ufrag:'.length)
+      } else if (line.startsWith('a=ice-pwd:')) {
+        ;(section ?? offer).icePwd = line.slice('a=ice-pwd:'.length)
+      } else if (section && line.startsWith('a=mid:')) {
         section.mid = line.slice('a=mid:'.length)
       }
     }
@@ -42,12 +39,14 @@ export class SdpUtils {
    * Check the minimum JSEP shape of an initial offer: session lines, at least one m-line and ICE credentials.
    */
   static isSdpOffer(sdp: string): boolean {
-    const lines = sdp.split(/\r?\n/).filter(line => line !== '')
-    return lines.some(line => /^v=\d+$/.test(line))
-      && lines.some(line => line.startsWith('o='))
-      && lines.some(line => line.startsWith('m='))
-      && lines.some(line => line.startsWith('a=ice-ufrag:'))
-      && lines.some(line => line.startsWith('a=ice-pwd:'))
+    const lines = sdp.split(/\r?\n/).filter((line) => line !== '')
+    return (
+      lines.some((line) => /^v=\d+$/.test(line)) &&
+      lines.some((line) => line.startsWith('o=')) &&
+      lines.some((line) => line.startsWith('m=')) &&
+      lines.some((line) => line.startsWith('a=ice-ufrag:')) &&
+      lines.some((line) => line.startsWith('a=ice-pwd:'))
+    )
   }
 
   /**
@@ -106,11 +105,7 @@ export class SdpUtils {
     payloadType = SdpUtils.reservePayloadType(payloadTypes)
     lines[0] += ` ${payloadType}`
     lines.splice(lines.length - 1, 0, `a=rtpmap:${payloadType} multiopus/48000/5`)
-    lines.splice(
-      lines.length - 1,
-      0,
-      `a=fmtp:${payloadType} channel_mapping=0,4,1,2,3;num_streams=3;coupled_streams=2`,
-    )
+    lines.splice(lines.length - 1, 0, `a=fmtp:${payloadType} channel_mapping=0,4,1,2,3;num_streams=3;coupled_streams=2`)
     lines.splice(lines.length - 1, 0, `a=rtcp-fb:${payloadType} transport-cc`)
 
     payloadType = SdpUtils.reservePayloadType(payloadTypes)
@@ -256,7 +251,7 @@ export class SdpUtils {
 
     const payloadTypes = sections
       .slice(1)
-      .map(s => s.split('\r\n')[0].split(' ').slice(3))
+      .map((s) => s.split('\r\n')[0].split(' ').slice(3))
       .reduce((prev, cur) => [...prev, ...cur], [])
 
     for (let i = 1; i < sections.length; i++) {
@@ -297,22 +292,22 @@ export class SdpUtils {
     const bySection = new Map<MediaSection, string[]>()
     for (const candidate of candidates) {
       const { sdpMid, sdpMLineIndex } = candidate
-      const media = sdpMid != null
-        ? offer.media.find(section => section.mid === sdpMid)
-        : sdpMLineIndex == null ? undefined : offer.media[sdpMLineIndex]
-      if (!media?.mid)
-        continue
+      // sdpMid 与 sdpMLineIndex 在浏览器中是可选字段，可能为 null。
+      const media =
+        sdpMid !== null && sdpMid !== undefined
+          ? offer.media.find((section) => section.mid === sdpMid)
+          : sdpMLineIndex === null || sdpMLineIndex === undefined
+            ? undefined
+            : offer.media[sdpMLineIndex]
+      if (!media?.mid) continue
 
       const line = candidate.candidate ? `a=${candidate.candidate}` : 'a=end-of-candidates'
       const lines = bySection.get(media)
-      if (lines)
-        lines.push(line)
-      else
-        bySection.set(media, [line])
+      if (lines) lines.push(line)
+      else bySection.set(media, [line])
     }
 
-    if (bySection.size === 0)
-      return ''
+    if (bySection.size === 0) return ''
 
     const fragment: string[] = []
     SdpUtils.appendIceAttributes(fragment, offer)
@@ -325,9 +320,7 @@ export class SdpUtils {
   }
 
   private static appendIceAttributes(lines: string[], attributes: IceAttributes): void {
-    if (attributes.iceUfrag)
-      lines.push(`a=ice-ufrag:${attributes.iceUfrag}`)
-    if (attributes.icePwd)
-      lines.push(`a=ice-pwd:${attributes.icePwd}`)
+    if (attributes.iceUfrag) lines.push(`a=ice-ufrag:${attributes.iceUfrag}`)
+    if (attributes.icePwd) lines.push(`a=ice-pwd:${attributes.icePwd}`)
   }
 }

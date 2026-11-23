@@ -15,8 +15,9 @@ Whepts is a WebRTC WHEP (WebRTC-HTTP Egress Protocol) player library that suppor
 
 ### Linting
 
-- `pnpm lint` - Run ESLint
-- `pnpm lint:fix` - Run ESLint with auto-fix
+- `pnpm lint` - Run oxlint
+- `pnpm lint:fix` - Run oxlint with auto-fix
+- `pnpm format` - Format with oxfmt
 
 ## Architecture
 
@@ -171,14 +172,14 @@ Runtime dependencies:
 
 ## Build Configuration
 
-- Rollup with TypeScript, ESLint, Terser plugins
+- Rollup with TypeScript and Terser plugins; linting runs separately via oxlint
 - Production builds drop console/debugger statements
 - External dependencies: none (pure browser library)
 - Entry point: `src/index.ts` → `dist/index.js`
 
 ## Code Style
 
-- Uses @antfu/eslint-config with `type: 'lib'`
+- oxlint rules in `.oxlintrc.json`; formatting in `.oxfmtrc.json`
 - pnpm as package manager
 - TypeScript path resolution enabled
 - No formatting of markdown files

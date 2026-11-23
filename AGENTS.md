@@ -4,8 +4,10 @@
 
 - `npm run build` - Production build with minification
 - `npm run build:debug` - Debug build with source maps
-- `npm run lint` - Run ESLint to check code quality
-- `npm run lint:fix` - Auto-fix ESLint issues
+- `npm run lint` - Run oxlint to check code quality
+- `npm run lint:fix` - Auto-fix oxlint issues
+- `npm run format` - Format with oxfmt
+- `npm run format:check` - Verify formatting without writing
 
 - `npm test` - Build the production bundle and run the Node regression suite
 - `node_modules/.bin/tsc --noEmit` - Type-check without emitting
@@ -22,9 +24,9 @@
 
 ### Formatting
 
-- ESLint uses `@antfu/eslint-config` with formatters enabled
-- Run `npm run lint:fix` before committing
-- No manual formatting required - let ESLint handle it
+- Formatting is handled by oxfmt (`.oxfmtrc.json`); linting by oxlint (`.oxlintrc.json`)
+- Run `npm run format` and `npm run lint:fix` before committing
+- No manual formatting required - let the tools handle it
 
 ### Types
 
@@ -174,7 +176,7 @@ this.emitter.emit('play:stalled', {
 
 - TypeScript 5.9 with strict mode
 - Rollup for bundling (ES module output)
-- ESLint with @antfu/eslint-config
+- oxlint for linting and oxfmt for formatting
 - pnpm as package manager
 
 ## Before Committing

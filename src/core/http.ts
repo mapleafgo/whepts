@@ -32,8 +32,7 @@ export class HttpClient {
   }
 
   private checkStatus(response: Response, accepted: boolean): void {
-    if (accepted)
-      return
+    if (accepted) return
 
     // 响应正文可能包含服务端内部信息，不作为公开错误来源。
     void response.body?.cancel().catch(() => {})
@@ -65,7 +64,12 @@ export class HttpClient {
   }
 
   private authHeader(url: string): Record<string, string> {
-    if (!this.credentialOrigin || this.credentialOrigin === 'null' || !URL.canParse(url) || new URL(url).origin !== this.credentialOrigin)
+    if (
+      !this.credentialOrigin ||
+      this.credentialOrigin === 'null' ||
+      !URL.canParse(url) ||
+      new URL(url).origin !== this.credentialOrigin
+    )
       return {}
 
     if (this.options.conf.user && this.options.conf.user !== '') {
@@ -79,8 +83,7 @@ export class HttpClient {
   }
 
   async requestICEServers(signal: AbortSignal): Promise<RTCIceServer[]> {
-    if (this.options.conf.iceServers && this.options.conf.iceServers.length > 0)
-      return this.options.conf.iceServers
+    if (this.options.conf.iceServers && this.options.conf.iceServers.length > 0) return this.options.conf.iceServers
 
     return fetch(this.options.conf.url, {
       method: 'OPTIONS',
@@ -98,9 +101,12 @@ export class HttpClient {
    * POST the client offer.
    * Returns an answer body, or a counter-offer when the endpoint answered 406 with usable SDP.
    */
-  async sendOffer(offer: string, signal: AbortSignal, onSession: (session: WhepSession | null) => void): Promise<{ answer: string } | { counterOffer: string, expiresAt: number }> {
-    if (this.options.getState() !== 'running')
-      throw new WebRTCError(ErrorTypes.STATE_ERROR, 'closed')
+  async sendOffer(
+    offer: string,
+    signal: AbortSignal,
+    onSession: (session: WhepSession | null) => void,
+  ): Promise<{ answer: string } | { counterOffer: string; expiresAt: number }> {
+    if (this.options.getState() !== 'running') throw new WebRTCError(ErrorTypes.STATE_ERROR, 'closed')
 
     const endpoint = this.options.conf.url
     return fetch(endpoint, {
@@ -113,23 +119,27 @@ export class HttpClient {
       body: offer,
     }).then(async (res) => {
       const counterCandidate = res.status === 406
-      if (!counterCandidate)
-        this.checkStatus(res, res.status === 201)
+      if (!counterCandidate) this.checkStatus(res, res.status === 201)
 
       const location = res.headers.get('Location')
       const base = res.url || endpoint
       const url = location && URL.canParse(location, base) ? new URL(location, base) : undefined
       const usable = url && (url.protocol === 'https:' || url.protocol === 'http:') && !url.username && !url.password
-      onSession(usable
-        ? { url: url.href, etag: res.headers.get('ETag'), authenticated: new URL(endpoint).origin === url.origin && new URL(base).origin === url.origin }
-        : null)
+      onSession(
+        usable
+          ? {
+              url: url.href,
+              etag: res.headers.get('ETag'),
+              authenticated: new URL(endpoint).origin === url.origin && new URL(base).origin === url.origin,
+            }
+          : null,
+      )
       if (signal.aborted) {
         void res.body?.cancel().catch(() => {})
         signal.throwIfAborted()
       }
       const body = await res.text()
-      if (!counterCandidate)
-        return { answer: body }
+      if (!counterCandidate) return { answer: body }
 
       // 草案 §4.3.3：只有带 application/sdp 和合法 SDP offer 的 406 才是反向 offer。
       const contentType = res.headers.get('Content-Type') ?? ''
@@ -147,7 +157,12 @@ export class HttpClient {
   }
 
   async deleteSession(session: WhepSession, signal: AbortSignal): Promise<void> {
-    const response = await fetch(session.url, { method: 'DELETE', signal, redirect: 'error', headers: this.sessionAuthHeader(session) })
+    const response = await fetch(session.url, {
+      method: 'DELETE',
+      signal,
+      redirect: 'error',
+      headers: this.sessionAuthHeader(session),
+    })
     this.checkStatus(response, response.ok)
   }
 
@@ -155,10 +170,14 @@ export class HttpClient {
    * Send one ICE fragment.
    * Returns the rotated entity tag when the session answered a 200 (ICE restart) or null.
    */
-  async sendLocalCandidates(session: WhepSession, offerData: ParsedOffer, candidates: RTCIceCandidate[], signal: AbortSignal): Promise<string | null> {
+  async sendLocalCandidates(
+    session: WhepSession,
+    offerData: ParsedOffer,
+    candidates: RTCIceCandidate[],
+    signal: AbortSignal,
+  ): Promise<string | null> {
     const body = SdpUtils.generateSdpFragment(offerData, candidates)
-    if (!body)
-      return null
+    if (!body) return null
 
     const response = await fetch(session.url, {
       method: 'PATCH',

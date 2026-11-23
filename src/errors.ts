@@ -44,11 +44,8 @@ export class WebRTCError extends Error {
   constructor(type: ErrorType, message: string, options?: WebRTCErrorOptions) {
     super(message, options)
     this.type = type
-    if (options?.reason !== undefined)
-      this.reason = options.reason
-    if (options?.phase !== undefined)
-      this.phase = options.phase
-    if (options?.httpStatus !== undefined)
-      this.httpStatus = options.httpStatus
+    if (options?.reason !== undefined) this.reason = options.reason
+    if (options?.phase !== undefined) this.phase = options.phase
+    if (options?.httpStatus !== undefined) this.httpStatus = options.httpStatus
   }
 }

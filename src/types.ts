@@ -46,16 +46,20 @@ export interface WhepDiagnostic {
  */
 export interface WhepEvents {
   'codecs:detected': (codecs: string[]) => void
-  'state:change': (payload: { from: State, to: State }) => void
-  'candidate': (candidate: RTCIceCandidate) => void
-  'track': (evt: RTCTrackEvent) => void
+  'state:change': (payload: { from: State; to: State }) => void
+  candidate: (candidate: RTCIceCandidate) => void
+  track: (evt: RTCTrackEvent) => void
   'play:success': (payload: { muted: boolean }) => void
-  'play:failed': (payload: { code: 'autoplay-blocked' | 'video-unavailable' | 'element-recovery-exhausted' | 'playback-error', reason: string, muted: boolean }) => void
+  'play:failed': (payload: {
+    code: 'autoplay-blocked' | 'video-unavailable' | 'element-recovery-exhausted' | 'playback-error'
+    reason: string
+    muted: boolean
+  }) => void
   'play:stalled': (payload: { reason: string }) => void
   'flow:stalled': (payload: { reason: string }) => void
-  'error': (err: WebRTCError) => void
-  'close': () => void
-  'restart': () => void
+  error: (err: WebRTCError) => void
+  close: () => void
+  restart: () => void
 }
 
 /**

@@ -1,5 +1,4 @@
 import commonjs from '@rollup/plugin-commonjs'
-import eslint from '@rollup/plugin-eslint'
 import terser from '@rollup/plugin-terser'
 import typescript from '@rollup/plugin-typescript'
 import del from 'rollup-plugin-delete'
@@ -22,7 +21,6 @@ export default {
   plugins: [
     del({ targets: 'dist' }),
     commonjs(),
-    eslint(),
     typescript({
       importHelpers: true,
       sourceMap: !isProduction,

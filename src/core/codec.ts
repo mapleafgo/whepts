@@ -19,11 +19,15 @@ export class CodecDetector {
           ['video/H265'],
           ['video/VP9'],
           ['video/AV1'],
-        ].map(c => WebRtcUtils.supportsNonAdvertisedCodec(c[0], c[1], signal).then(r => (r ? c[0] : false), () => false)),
+        ].map((c) =>
+          WebRtcUtils.supportsNonAdvertisedCodec(c[0], c[1], signal).then(
+            (r) => (r ? c[0] : false),
+            () => false,
+          ),
+        ),
       )
       return signal.aborted ? [] : results.filter((codec): codec is string => codec !== false)
-    }
-    finally {
+    } finally {
       clearTimeout(timeout)
     }
   }

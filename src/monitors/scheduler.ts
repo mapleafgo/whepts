@@ -96,7 +96,8 @@ export class MonitorScheduler {
     this.baseInterval = options.baseInterval ?? DEFAULT_SCHEDULER_OPTIONS.baseInterval
     this.maxTasksPerTick = options.maxTasksPerTick ?? DEFAULT_SCHEDULER_OPTIONS.maxTasksPerTick
     this.performanceThreshold = options.performanceThreshold ?? DEFAULT_SCHEDULER_OPTIONS.performanceThreshold
-    this.enableAdaptiveThrottling = options.enableAdaptiveThrottling ?? DEFAULT_SCHEDULER_OPTIONS.enableAdaptiveThrottling
+    this.enableAdaptiveThrottling =
+      options.enableAdaptiveThrottling ?? DEFAULT_SCHEDULER_OPTIONS.enableAdaptiveThrottling
   }
 
   /**
@@ -111,8 +112,7 @@ export class MonitorScheduler {
     const taskId = `${owner}-${interval}`
     // 同一 owner 只保留最新任务，避免间隔切换时留下孤儿任务。
     for (const [id, task] of this.tasks) {
-      if (task.owner === owner && id !== taskId)
-        this.tasks.delete(id)
+      if (task.owner === owner && id !== taskId) this.tasks.delete(id)
     }
 
     const now = Date.now()
@@ -169,8 +169,7 @@ export class MonitorScheduler {
    * 启动调度器
    */
   private ensureStarted(): void {
-    if (this.isRunning)
-      return
+    if (this.isRunning) return
 
     this.isRunning = true
     this.lastTickTime = Date.now()
@@ -209,8 +208,7 @@ export class MonitorScheduler {
     // 获取需要执行的任务
     const tasksToRun = this.getTasksToRun(now)
 
-    if (tasksToRun.length === 0)
-      return
+    if (tasksToRun.length === 0) return
 
     // 执行任务
     this.runTasks(tasksToRun, now)
@@ -225,12 +223,10 @@ export class MonitorScheduler {
     if (tickDelay > this.performanceThreshold * 2) {
       // 严重超载，4x 降频
       this.throttleLevel = Math.min(this.throttleLevel + 1, 2)
-    }
-    else if (tickDelay > this.performanceThreshold) {
+    } else if (tickDelay > this.performanceThreshold) {
       // 轻微超载，2x 降频
       this.throttleLevel = Math.max(this.throttleLevel, 1)
-    }
-    else if (tickDelay < this.performanceThreshold * 0.5) {
+    } else if (tickDelay < this.performanceThreshold * 0.5) {
       // 性能良好，降低降频级别
       this.throttleLevel = Math.max(this.throttleLevel - 1, 0)
     }
@@ -247,8 +243,7 @@ export class MonitorScheduler {
 
     for (const task of this.tasks.values()) {
       // 跳过暂停的任务
-      if (task.status !== TaskStatus.SCHEDULED)
-        continue
+      if (task.status !== TaskStatus.SCHEDULED) continue
 
       // 计算有效间隔（考虑降频）
       const effectiveInterval = task.interval * throttleMultiplier
@@ -289,10 +284,12 @@ export class MonitorScheduler {
       task.lastRun = now
       task.nextRun = now + task.interval
       task.status = TaskStatus.SCHEDULED
-    }
-    catch (error) {
+    } catch (error) {
       // 任务失败已由各监控器自行上报，这里只作调试提示。
-      console.debug('[MonitorScheduler] Task failed', { taskId: task.id, error: error instanceof Error ? error.name : 'unknown' })
+      console.debug('[MonitorScheduler] Task failed', {
+        taskId: task.id,
+        error: error instanceof Error ? error.name : 'unknown',
+      })
       // 失败仍推进节奏，避免同一个出错任务按每次 tick 反复重跑。
       task.lastRun = now
       task.nextRun = now + task.interval

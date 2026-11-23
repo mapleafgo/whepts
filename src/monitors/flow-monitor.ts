@@ -67,7 +67,7 @@ export class FlowMonitor {
   ) {
     this.scheduler = scheduler
     this.baseInterval = options.interval ?? FLOW_SAMPLE_INTERVAL_MS
-    this.stableInterval = options.stableInterval || (this.baseInterval * 2)
+    this.stableInterval = options.stableInterval || this.baseInterval * 2
     this.maxNoProgress = options.maxNoProgress || 3
     this.stabilizationTime = options.stabilizationTime || FLOW_STABILIZATION_MS
   }
@@ -141,8 +141,7 @@ export class FlowMonitor {
    */
   private async performCheck(): Promise<void> {
     const pc = this.pc
-    if (!pc || pc.connectionState !== 'connected' || this.page?.hidden)
-      return
+    if (!pc || pc.connectionState !== 'connected' || this.page?.hidden) return
 
     const generation = this.generation
     await this.checkFlowState(pc, generation)
@@ -168,8 +167,7 @@ export class FlowMonitor {
     let expired = false
     // getStats 不可取消；超时后丢弃结果，但仍等原调用结算再采样。
     const expire = (): void => {
-      if (expired || generation !== this.generation)
-        return
+      if (expired || generation !== this.generation) return
       expired = true
       this.reset()
       if (visibilityGeneration === this.visibilityGeneration && pc.connectionState === 'connected')
@@ -179,30 +177,25 @@ export class FlowMonitor {
     this.sampleTimeout = timeout
     const { bytes: currentBytes, errorName } = await this.getReceivedBytes(pc)
     clearTimeout(timeout)
-    if (generation !== this.generation)
-      return
+    if (generation !== this.generation) return
     this.sampleTimeout = undefined
     if (expired || Date.now() - startedAt >= this.baseInterval) {
       expire()
       return
     }
-    if (visibilityGeneration !== this.visibilityGeneration)
-      return
+    if (visibilityGeneration !== this.visibilityGeneration) return
     // 统计失败不等于断流，也不能当作空样本；上报后等下一次采样重建基线。
     if (errorName !== undefined) {
       this.reset()
-      if (pc.connectionState === 'connected')
-        this.options.onSampleFailed(pc, errorName)
+      if (pc.connectionState === 'connected') this.options.onSampleFailed(pc, errorName)
       return
     }
-    if (pc.connectionState !== 'connected')
-      return
+    if (pc.connectionState !== 'connected') return
 
     const interval = this.scheduledInterval ?? this.baseInterval
     const gap = this.lastSampleAt === undefined ? 0 : startedAt - this.lastSampleAt
     // 长时间未采样时不延续休眠前的停滞计数。
-    if (gap < 0 || gap > interval * 4)
-      this.reset()
+    if (gap < 0 || gap > interval * 4) this.reset()
     this.lastSampleAt = startedAt
 
     const previous = this.lastBytesReceived
@@ -210,27 +203,33 @@ export class FlowMonitor {
     if ([...currentBytes].some(([id, bytes]) => previous.has(id) && bytes > previous.get(id)!))
       this.options.onProgress(pc)
     // 报告增减或计数重置时重新建立基线，避免把不可比较的样本判为停滞。
-    if (currentBytes.size === 0 || currentBytes.size !== previous.size
-      || [...currentBytes].some(([id, bytes]) => previous.get(id) !== bytes)) {
+    if (
+      currentBytes.size === 0 ||
+      currentBytes.size !== previous.size ||
+      [...currentBytes].some(([id, bytes]) => previous.get(id) !== bytes)
+    ) {
       this.consecutiveNoProgress = 0
       return
     }
     this.handleNoProgress()
   }
 
-  private async getReceivedBytes(pc: RTCPeerConnection): Promise<{ bytes: Map<string, number>, errorName?: string }> {
+  private async getReceivedBytes(pc: RTCPeerConnection): Promise<{ bytes: Map<string, number>; errorName?: string }> {
     const videoBytes = new Map<string, number>()
     try {
       const stats = await pc.getStats()
       stats.forEach((stat) => {
-        if (stat.type !== 'inbound-rtp')
-          return
+        if (stat.type !== 'inbound-rtp') return
         const inbound = stat as RTCInboundRtpStreamStats
-        if (inbound.kind === 'video' && typeof inbound.bytesReceived === 'number' && Number.isFinite(inbound.bytesReceived) && inbound.bytesReceived >= 0)
+        if (
+          inbound.kind === 'video' &&
+          typeof inbound.bytesReceived === 'number' &&
+          Number.isFinite(inbound.bytesReceived) &&
+          inbound.bytesReceived >= 0
+        )
           videoBytes.set(inbound.id, inbound.bytesReceived)
       })
-    }
-    catch (error) {
+    } catch (error) {
       videoBytes.clear()
       return { bytes: videoBytes, errorName: error instanceof Error ? error.name : 'unknown' }
     }
