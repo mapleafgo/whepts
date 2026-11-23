@@ -291,7 +291,8 @@ export class MonitorScheduler {
       task.status = TaskStatus.SCHEDULED
     }
     catch (error) {
-      console.warn('[MonitorScheduler] Task failed', { taskId: task.id, error: error instanceof Error ? error.name : 'unknown' })
+      // 任务失败已由各监控器自行上报，这里只作调试提示。
+      console.debug('[MonitorScheduler] Task failed', { taskId: task.id, error: error instanceof Error ? error.name : 'unknown' })
       // 失败仍推进节奏，避免同一个出错任务按每次 tick 反复重跑。
       task.lastRun = now
       task.nextRun = now + task.interval

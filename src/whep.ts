@@ -1,7 +1,7 @@
 import type { WhepSession } from './core/http.js'
-import type { ParsedOffer } from './utils/sdp.js'
 import type { ErrorPhase } from './errors.js'
 import type { Conf, State, WhepDiagnostic, WhepEvents } from './types.js'
+import type { ParsedOffer } from './utils/sdp.js'
 import { EventEmitter } from 'eventemitter3'
 import { atom } from 'nanostores'
 import { CodecDetector } from './core/codec.js'
@@ -132,7 +132,8 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
 
     this.codecDetector.detect().then(codecs => this.handleCodecsDetected(codecs)).catch((error: unknown) => {
       // 探测失败不阻断播放：按未检测到扩展编解码器继续。
-      console.warn('[WhepTS] Codec detection failed', { playerId: this.playerId, error: error instanceof Error ? error.name : 'unknown' })
+      // 探测失败是预期内的降级，不是故障：只在调试构建以 debug 级别提示。
+      console.debug('[WhepTS] Codec detection failed', { playerId: this.playerId, error: error instanceof Error ? error.name : 'unknown' })
       this.handleCodecsDetected([])
     })
   }
@@ -175,7 +176,6 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
   }
 
   private notifyStateChange(from: State, to: State): void {
-    // eslint-disable-next-line no-console -- 仅在调试构建中保留状态日志。
     console.debug('[WhepTS] State changed', { playerId: this.playerId, attemptId: this.attempt?.id, from, to })
     this.notify('state:change', { from, to })
   }
@@ -359,7 +359,8 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
   private reportListenerFailure(event: string, error: unknown): void {
     const cause = error instanceof Error ? error.name : 'unknown'
     this.notifyDiagnostic({ operation: 'listener-error', reason: 'request-failed', cause })
-    console.warn('[WhepTS] Public event listener failed', { playerId: this.playerId, event, cause })
+    // 监听器异常属于调用方 bug，通过诊断通道对外，日志只作调试提示。
+    console.debug('[WhepTS] Public event listener failed', { playerId: this.playerId, event, cause })
   }
 
   /** Wrappers indexed per listener and context so each registration can be removed alone. */
