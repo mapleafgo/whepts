@@ -434,11 +434,13 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
           ? "WHEP signaling failed"
           : "Peer connection failed";
     const httpStatus = error instanceof WebRTCError ? error.httpStatus : undefined;
+    const retryAt = error instanceof WebRTCError ? error.retryAt : undefined;
     const cause = error instanceof WebRTCError ? error.cause : sanitizeCause(error);
     this.notifyError(
       new WebRTCError(type, message, {
         phase,
         httpStatus,
+        retryAt,
         reason,
         ...(cause === undefined ? {} : { cause }),
       }),
@@ -756,6 +758,7 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
     let endpoint: string;
     try {
       endpoint = validateEndpoint(url);
+      this.httpClient.assertRetryAllowed(endpoint);
     } catch (error) {
       if (!(error instanceof WebRTCError)) throw error;
       this.notifyError(error);

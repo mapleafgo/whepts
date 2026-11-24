@@ -13,4 +13,8 @@
 | [三个缺口研究](plans/whep-player-gaps-research.md) | 过程记录：元素接管、监听器异常、PATCH 挂起 |
 | [2026-01 事件驱动重构](plans/2026-01-26-event-driven-refactor.md) | 历史记录：已被当前方案取代 |
 
+| [监听器调研](plans/2026-11-24-player-listener-research.md) | 过程记录：异常隔离 |
+| [复审调研](plans/2026-11-24-whep-follow-up-research.md) | 过程记录：反向信令与解绑 |
+| [WHEP 草案审查](plans/2026-11-24-whep-conformance.md) | 审查基点的协议矩阵，不代表当前实现 |
+
 主文档描述当前有效方案；【过程记录】与【历史记录】保留依据和比较，不作为使用说明。

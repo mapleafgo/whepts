@@ -58,7 +58,10 @@ class Handler(SimpleHTTPRequestHandler):
         if self.path != OFFER or self.headers.get_content_type() != 'application/sdp':
             return self.reply(400)
         self.rfile.read(int(self.headers['Content-Length']))
-        content_type = 'application/sdp'
+        self.server.post_count += 1
+        if self.server.retry_after is not None:
+            return self.reply(409, Retry_After=self.server.retry_after)
+        content_type = self.server.offer_content_type
         if self.server.expired:
             content_type += '; valid-until="Thu, 01 Jan 1970 00:00:00 GMT"'
         self.reply(406, self.server.offer.encode(), Location=SESSION, Content_Type=content_type)
@@ -92,6 +95,9 @@ class CounterOfferBrowserTest(unittest.TestCase):
         self.server.answers = queue.Queue()
         self.server.acknowledge = threading.Event()
         self.server.expired = False
+        self.server.offer_content_type = 'application/sdp'
+        self.server.post_count = 0
+        self.server.retry_after = None
         thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         thread.start()
         self.addCleanup(thread.join)
@@ -193,6 +199,36 @@ class CounterOfferBrowserTest(unittest.TestCase):
         self.assertEqual(self.page.evaluate('player.state'), 'failed')
         self.assertEqual(self.page.evaluate('errors.map(error => [error.phase, error.reason])'),
                          [['signaling', 'setup-timeout']])
+
+    def test_retry_after_blocks_an_early_post_without_queueing_it(self):
+        self.server.retry_after = '2'
+        self.page.evaluate('''async url => {
+            const {default: Whep} = await import('/dist/index.js');
+            window.errors = [];
+            window.player = new Whep({url, container: document.querySelector('video'), lazyLoad: false});
+            player.on('error', ({httpStatus, retryAt}) => errors.push({httpStatus, retryAt}));
+        }''', self.origin + OFFER)
+        self.page.wait_for_function('errors.length === 1')
+        self.page.evaluate('url => player.updateUrl(url)', self.origin + OFFER)
+        self.page.wait_for_function('errors.length === 2')
+        first, refusal = self.page.evaluate('errors')
+        self.assertEqual(self.server.post_count, 1)
+        self.assertEqual(first['httpStatus'], 409)
+        self.assertIsInstance(first['retryAt'], int)
+        self.assertEqual(refusal['retryAt'], first['retryAt'])
+        self.page.wait_for_function('Date.now() >= errors[0].retryAt + 100')
+        self.assertEqual(self.server.post_count, 1)
+        self.page.evaluate('url => player.updateUrl(url)', self.origin + OFFER)
+        self.page.wait_for_function('errors.length === 3')
+        self.assertEqual(self.server.post_count, 2)
+        self.page.evaluate('player.close()')
+
+    def test_non_sdp_mime_is_not_answered(self):
+        self.server.offer_content_type = 'application/sdpx'
+        self.start_player()
+        self.page.wait_for_function('errors.length > 0', timeout=3000)
+        self.assertTrue(self.server.answers.empty())
+        self.assertEqual(self.page.evaluate('errors.map(error => error.type)'), ['RequestError'])
 
     def test_expired_offer_is_a_signaling_error_without_patch(self):
         self.server.expired = True

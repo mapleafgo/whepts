@@ -39,6 +39,7 @@ export class ConnectionManager {
 
     const pc = new RTCPeerConnection({
       iceServers,
+      bundlePolicy: "max-bundle",
       sdpSemantics: "unified-plan",
     });
     this.pc = pc;

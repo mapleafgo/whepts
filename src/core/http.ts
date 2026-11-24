@@ -24,13 +24,55 @@ function readValidUntil(contentType: string): number {
   return Number.isNaN(parsed) ? Date.now() + DEFAULT_COUNTER_OFFER_LIFETIME_MS : parsed;
 }
 
+function endpointKey(endpoint: string): string {
+  const url = new URL(endpoint);
+  url.hash = "";
+  return url.href;
+}
+
+function readRetryAt(header: string | null, now: number): number | undefined {
+  if (header === null) return;
+  const value = header.trim();
+  let retryAt: number;
+  if (/^\d+$/.test(value)) {
+    retryAt = now + Number(value) * 1000;
+  } else {
+    // Date.parse 也接受数字片段等非 HTTP-date 值，先限制为 HTTP 的三种日期格式。
+    const httpDate =
+      /^(?:[A-Za-z]{3}, \d{2} [A-Za-z]{3} \d{4} \d{2}:\d{2}:\d{2} GMT|[A-Za-z]+, \d{2}-[A-Za-z]{3}-\d{2} \d{2}:\d{2}:\d{2} GMT|[A-Za-z]{3} [A-Za-z]{3} [ \d]\d \d{2}:\d{2}:\d{2} \d{4})$/;
+    if (!httpDate.test(value)) return;
+    retryAt = Date.parse(value.endsWith(" GMT") ? value : value + " GMT");
+  }
+  if (retryAt > now && Number.isSafeInteger(retryAt) && retryAt <= 8_640_000_000_000_000)
+    return retryAt;
+}
+
 export class HttpClient {
+  private readonly retryDeadlines = new Map<string, number>();
   private readonly credentialOrigin: string | undefined;
 
   constructor(private options: HttpClientOptions) {
     this.credentialOrigin = URL.canParse(options.conf.url)
       ? new URL(options.conf.url).origin
       : undefined;
+  }
+
+  /** Reject an explicit retry before it can replace an active session. */
+  assertRetryAllowed(endpoint: string): void {
+    const now = Date.now();
+    for (const [key, retryAt] of this.retryDeadlines) {
+      if (retryAt <= now) this.retryDeadlines.delete(key);
+    }
+    const retryAt = this.retryDeadlines.get(endpointKey(endpoint));
+    if (retryAt !== undefined)
+      throw new WebRTCError(
+        ErrorTypes.REQUEST_ERROR,
+        "WHEP endpoint retry deadline has not elapsed",
+        {
+          phase: "signaling",
+          retryAt,
+        },
+      );
   }
 
   private async request(
@@ -70,11 +112,12 @@ export class HttpClient {
   }
 
   /** Map any unexpected status to the generic request failure; callers read httpStatus. */
-  private statusError(status: number): WebRTCError {
+  private statusError(status: number, retryAt?: number): WebRTCError {
     // 草案 §4.1：不得把状态码映射到具体原因，统一交由 httpStatus 表达。
     return new WebRTCError(ErrorTypes.REQUEST_ERROR, "Unexpected WHEP response status", {
       phase: "signaling",
       ...(status > 0 ? { httpStatus: status } : {}),
+      ...(retryAt === undefined ? {} : { retryAt }),
     });
   }
 
@@ -141,6 +184,7 @@ export class HttpClient {
       throw new WebRTCError(ErrorTypes.STATE_ERROR, "closed");
 
     const endpoint = this.options.conf.url;
+    this.assertRetryAllowed(endpoint);
     return this.request(endpoint, {
       method: "POST",
       signal,
@@ -150,7 +194,16 @@ export class HttpClient {
       },
       body: offer,
     }).then(async (res) => {
-      const counterCandidate = res.status === 406;
+      if (res.status === 409) {
+        const retryAt = readRetryAt(res.headers.get("Retry-After"), Date.now());
+        if (retryAt !== undefined) this.retryDeadlines.set(endpointKey(endpoint), retryAt);
+        void res.body?.cancel().catch(() => {});
+        throw this.statusError(res.status, retryAt);
+      }
+      const contentType = res.headers.get("Content-Type") ?? "";
+      const counterCandidate =
+        res.status === 406 &&
+        contentType.split(";", 1)[0].trim().toLowerCase() === "application/sdp";
       if (!counterCandidate) this.checkStatus(res, res.status === 201);
 
       const location = res.headers.get("Location");
@@ -179,12 +232,7 @@ export class HttpClient {
       if (!counterCandidate) return { answer: body };
 
       // 草案 §4.3.3：只有带 application/sdp 和合法 SDP offer 的 406 才是反向 offer。
-      const contentType = res.headers.get("Content-Type") ?? "";
-      if (
-        !usable ||
-        !contentType.toLowerCase().startsWith("application/sdp") ||
-        !SdpUtils.isSdpOffer(body)
-      ) {
+      if (!usable || !SdpUtils.isSdpOffer(body)) {
         void res.body?.cancel().catch(() => {});
         throw this.statusError(res.status);
       }

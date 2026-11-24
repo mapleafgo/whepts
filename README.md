@@ -64,9 +64,9 @@ resume.addEventListener("click", () => player.resume());
 
 候选 PATCH 失败或超过 5 秒未返回时，播放器只丢弃该批候选并通过 `diagnostic` 事件（`operation: "trickle-ice"`） 上报，会话与播放不受影响；后续候选仍会继续发送。这是有意与部分服务端参考实现（失败即整会话重启）不同的取舍。
 
-ICE 重启（PATCH 返回 `200` + 新 `ETag`）受支持，后续候选使用新的实体标签。服务端用 `406 Not Acceptable` + `application/sdp` + 合法 offer 发反向 offer（草案 §4.3.2）时，播放器生成 answer 并用 `PATCH application/sdp` 提交，期望 `204`；其余 406 按 HTTP 错误处理。
+播放器使用浏览器原生 `max-bundle`。播放器可断线后重建 WHEP 会话，但不支持在原会话内执行 ICE 重启。服务端用 `406 Not Acceptable` + `application/sdp` + 合法 offer 发反向 offer（草案 §4.3.2）时，播放器生成 answer 并用 `PATCH application/sdp` 提交，期望 `204`；其余 406 按 HTTP 错误处理。
 
-首次建连失败由调用方决定是否重试。已连通的传输明确失败后，播放器可有限重连同一来源；不会自动切备用流。流量和播放停滞仅通知，不触发重连。
+首次建连失败由调用方决定是否重试。收到 `409` 且有可读、有效的 `Retry-After` 时，`error.retryAt` 给出可重试的 Unix 时间戳（毫秒）；同一实例在期限内显式重试该端点会立即报错，不发请求、不排队，也不限制切换到其他端点。跨源部署需通过 `Access-Control-Expose-Headers` 暴露 `Retry-After`。已连通的传输明确失败后，播放器可有限重连同一来源；不会自动切备用流。流量和播放停滞仅通知，不触发重连。
 
 ## 事件
 
@@ -82,7 +82,7 @@ ICE 重启（PATCH 返回 `200` + 新 `ETag`）受支持，后续候选使用新
 | `diagnostic` | `WhepDiagnostic`，用于观测脱敏的运行异常。 |
 | `restart`、`close` | 已安排同源重连、本地关闭完成。 |
 
-监听器语义与 DOM 事件派发一致：同一个事件的通知按注册时的快照依次调用，派发不等待监听器返回的 Promise。监听器同步抛错或返回的 Promise 被拒绝，都不会中断其余监听器或让播放失败；非诊断监听器的异常通过 `diagnostic` 事件上报，`operation` 为 `listener-error`。监听器内调用 `close()` 或 `updateUrl()` 时，已经开始的派发仍会完成，之后的旧通知被抑制。`on`、`once`、`addListener` 与 `off`、`removeListener` 使用同一份注册表，第三次参数 `context` 决定监听器内的 `this`。
+监听器语义与 DOM 事件派发一致：同一个事件的通知按注册时的快照依次调用，派发不等待监听器返回的 Promise。监听器同步抛错或返回的 Promise 被拒绝，都不会中断其余监听器或让播放失败；非诊断监听器的异常通过 `diagnostic` 事件上报，`operation` 为 `listener-error`。监听器内调用 `close()` 或 `updateUrl()` 时，已经开始的派发仍会完成，之后的旧通知被抑制。`on`、`once`、`addListener` 与 `off`、`removeListener` 使用同一份注册表，第三个参数 `context` 决定监听器内的 `this`。
 
 当前导出的 `ErrorTypes` 包含 `SIGNAL_ERROR`、`STATE_ERROR`、`REQUEST_ERROR`、`NOT_FOUND_ERROR`、`VIDEO_ERROR` 和 `OTHER_ERROR`。HTTP 失败统一使用 `REQUEST_ERROR`，具体状态码由 `httpStatus` 表达；草案 §4.1 要求播放器不把状态码映射到具体原因。`NOT_FOUND_ERROR` 仅为保持导出兼容而保留。
 
@@ -95,7 +95,7 @@ ICE 重启（PATCH 返回 `200` + 新 `ETag`）受支持，后续候选使用新
 - 只支持单个来源；切换来源须调用 `updateUrl()`，不会自动回退到备用流。
 - 服务端用反向 offer 时，播放器需要可读的 `Location` 才能提交应答。
 - 跨源部署未暴露 `Location` 时不发 DELETE，远端会话依赖服务端回收。
-- 已知未验证：其他浏览器、H.265 真机解码、真实服务端的反向 offer 流程。详见[验收记录](docs/plans/2026-11-20-whepts-acceptance.md)。
+- 已知未验证：其他浏览器、更多 H.265 设备和系统组合、真实服务端的反向 offer 流程。详见[验收记录](docs/plans/2026-11-20-whepts-acceptance.md)。
 
 ## 开发与验证
 

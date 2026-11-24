@@ -166,15 +166,7 @@ export class PlayMonitor {
    * 停止播放停滞监控
    */
   stopMonitoring(): void {
-    this.generation++;
-    this.playPending = false;
-    this.activeSource = undefined;
-    this.recovering = false;
-    this.recoveryAttempts = 0;
-    clearTimeout(this.recoveryTimer);
-    this.recoveryTimer = undefined;
-    clearTimeout(this.verificationTimer);
-    this.verificationTimer = undefined;
+    this.invalidate();
     if (this.unregisterMonitor) {
       this.unregisterMonitor();
       this.unregisterMonitor = undefined;

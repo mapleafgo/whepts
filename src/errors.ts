@@ -39,6 +39,7 @@ interface WebRTCErrorOptions extends ErrorOptions {
   phase?: ErrorPhase;
   reason?: "setup-timeout";
   httpStatus?: number;
+  retryAt?: number;
 }
 
 /**
@@ -70,6 +71,8 @@ export class WebRTCError extends Error {
   declare readonly phase?: ErrorPhase;
   declare readonly reason?: "setup-timeout";
   declare readonly httpStatus?: number;
+  /** Earliest permitted retry time, in Unix milliseconds, when provided by the endpoint. */
+  declare readonly retryAt?: number;
 
   constructor(type: ErrorType, message: string, options?: WebRTCErrorOptions) {
     super(message, options);
@@ -77,5 +80,6 @@ export class WebRTCError extends Error {
     if (options?.reason !== undefined) this.reason = options.reason;
     if (options?.phase !== undefined) this.phase = options.phase;
     if (options?.httpStatus !== undefined) this.httpStatus = options.httpStatus;
+    if (options?.retryAt !== undefined) this.retryAt = options.retryAt;
   }
 }

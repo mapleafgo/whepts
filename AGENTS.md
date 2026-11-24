@@ -64,7 +64,7 @@ notify("flow:stalled", { reason: "数据流中断" });
 
 `ErrorTypes` 的值是 `"SignalError"`、`"StateError"`、`"RequestError"`、`"NotFoundError"`、`"VideoError"`、`"OtherError"`。HTTP 失败统一为 `REQUEST_ERROR`，具体状态码放在 `httpStatus`；不要把状态码映射成具体原因。`NOT_FOUND_ERROR` 仅为兼容导出，代码不产生它。
 
-首次连接失败由调用方决定是否重试；已连通传输断开后按 `2000/4000/8000` 毫秒重试同一来源，预算耗尽转 `failed`。不会自动切备用流。
+首次连接失败由调用方决定是否重试。POST 返回 `409` 且有可读、有效的 `Retry-After` 时，通过 `WebRTCError.retryAt` 提供 Unix 毫秒时间戳；期限内拒绝同一实例对该端点的重试，不排队。已连通传输断开后按 `2000/4000/8000` 毫秒重试同一来源，预算耗尽转 `failed`。不会自动切备用流。
 
 ## 诊断
 
@@ -93,7 +93,7 @@ notify("flow:stalled", { reason: "数据流中断" });
 
 `iceMode` 默认 `trickle`，`complete` 时等待收集完成后发送完整 offer 且不发送候选 PATCH。
 
-候选按批发送，每批 5 秒独立期限；失败或超时只丢弃该批并通过 `trickle-ice` 上报，会话继续。PATCH 返回 `200` 表示 ICE 重启并带新 `ETag`，`204` 表示候选已聚合。
+候选按批发送，每批 5 秒独立期限；失败或超时只丢弃该批并通过 `trickle-ice` 上报，会话继续。候选 PATCH 的 `204` 表示候选已聚合；收到 `200` 时仅接收新 `ETag`，不执行原地 ICE 重启。PeerConnection 使用 `max-bundle`。
 
 服务端用 `406` + `application/sdp` 发反向 offer 时，生成 answer 并以 `PATCH application/sdp` 提交，期望 `204`；缺少可读会话地址或反向 offer 过期时报错，不猜测目标。
 
@@ -128,4 +128,4 @@ SDP 使用 unified-plan 语义；负载类型在 30–127 之间预留，跳过 
 
 ## 未覆盖范围
 
-其他浏览器、H.265 真机解码、真实服务端的反向 offer 流程、ZLMediaKit 跨源暴露 `Location` 的真实部署清理均未验证。细节见[验收记录](docs/plans/2026-11-20-whepts-acceptance.md)。
+其他浏览器、更多 H.265 设备和系统组合、真实服务端的反向 offer 流程、ZLMediaKit 跨源暴露 `Location` 的真实部署清理均未验证。细节见[验收记录](docs/plans/2026-11-20-whepts-acceptance.md)。
