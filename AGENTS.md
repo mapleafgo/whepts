@@ -68,7 +68,7 @@ notify("flow:stalled", { reason: "数据流中断" });
 
 ## 诊断
 
-`onDiagnostic` 接收 `WhepDiagnostic`，覆盖 `delete-session`、`sample-flow`、`trickle-ice`、`listener-error` 四类操作。字段只含 `playerId`、`attemptId`、`state`、`operation`、`phase`、`elapsedMs`、`reason`、`httpStatus`、`cause`；`cause` 仅保留脱敏错误名，`phase` 与 `elapsedMs` 在没有实际阶段或计时时不出现。诊断不改变播放状态，也不触发重连。
+`diagnostic` 事件携带 `WhepDiagnostic`，覆盖 `delete-session`、`sample-flow`、`trickle-ice`、`listener-error` 四类操作。字段只含 `playerId`、`attemptId`、`state`、`operation`、`phase`、`elapsedMs`、`reason`、`httpStatus`、`cause`；`cause` 仅保留脱敏错误名，`phase` 与 `elapsedMs` 在没有实际阶段或计时时不出现。诊断不改变播放状态，也不触发重连。
 
 新增诊断必须沿用同一契约：不放入会话 URL、凭据、SDP 或响应正文。
 
@@ -114,11 +114,11 @@ SDP 使用 unified-plan 语义；负载类型在 30–127 之间预留，跳过 
 
 `src/index.ts` 默认导出 `WebRTCWhep`，并导出 `Conf`、`State`、`WhepEvents`、`WhepDiagnostic`、`ErrorTypes`、`WebRTCError`。
 
-`Conf` 字段：`url`、`container`、`user`、`pass`、`token`、`iceServers`、`iceMode`、`lazyLoad`、`onDiagnostic`。新增配置项须在 `src/types.ts` 写 JSDoc，并处理状态校验、资源清理、状态迁移与事件通知。
+`Conf` 字段：`url`、`container`、`user`、`pass`、`token`、`iceServers`、`iceMode`、`lazyLoad`。新增配置项须在 `src/types.ts` 写 JSDoc，并处理状态校验、资源清理、状态迁移与事件通知。
 
-公开方法与访问器：构造 `constructor(conf)`、`get state`、`get paused`、`pause()`、`resume()`、`updateUrl(url)`、`close()`。事件监听沿用 `EventEmitter`：`on`、`once`、`addListener` 注册的监听器统一包装，单个监听器抛错不中断其余监听器，也不影响播放，异常通过 `listener-error` 诊断上报；`off` 与 `removeListener` 按原引用移除。
+公开方法与访问器：构造 `constructor(conf)`、`get state`、`get paused`、`pause()`、`resume()`、`updateUrl(url)`、`close()`。事件监听沿用 `EventEmitter`：`on`、`once`、`addListener` 注册的监听器统一包装，单个监听器抛错不中断其余监听器，也不影响播放，非诊断监听器的异常通过 `listener-error` 上报，诊断监听器的异常只记调试日志；`off` 与 `removeListener` 按原引用移除。
 
-事件：`codecs:detected`、`state:change`、`candidate`、`track`、`play:success`、`play:failed`（`autoplay-blocked`、`video-unavailable`、`element-recovery-exhausted`、`playback-error`）、`play:stalled`、`flow:stalled`、`error`、`close`、`restart`。
+事件：`codecs:detected`、`state:change`、`candidate`、`track`、`play:success`、`play:failed`（`autoplay-blocked`、`video-unavailable`、`element-recovery-exhausted`、`playback-error`）、`play:stalled`、`flow:stalled`、`error`、`diagnostic`、`close`、`restart`。
 
 ## 提交前
 

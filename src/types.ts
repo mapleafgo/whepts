@@ -21,8 +21,6 @@ export interface Conf {
   iceMode?: "trickle" | "complete";
   /** Enable lazy loading (auto pause/resume when video goes off-screen). Default: true */
   lazyLoad?: boolean;
-  /** Observe sanitized operational failures without changing player state. */
-  onDiagnostic?: (diagnostic: WhepDiagnostic) => void;
 }
 
 /** Best-effort diagnostics for operations outside the playback error path. */
@@ -62,6 +60,8 @@ export interface WhepEvents {
   "play:stalled": (payload: { reason: string }) => void;
   "flow:stalled": (payload: { reason: string }) => void;
   error: (err: WebRTCError) => void;
+  /** Observe sanitized operational failures, including remote cleanup after close. */
+  diagnostic: (diagnostic: WhepDiagnostic) => void;
   close: () => void;
   restart: () => void;
 }

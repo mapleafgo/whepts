@@ -5,6 +5,8 @@ import { PlayMonitor } from "~/monitors/play-monitor";
 
 export class TrackManager {
   private stream?: MediaStream;
+  private attachedStream?: MediaStream;
+  private expectedSource: HTMLMediaElement["srcObject"];
   private observer?: IntersectionObserver;
   private visible: boolean;
   private manualPause = false;
@@ -23,6 +25,7 @@ export class TrackManager {
     onFlowTimeout: (pc: RTCPeerConnection, elapsedMs: number) => void,
     onFlowSampleFailed: (pc: RTCPeerConnection, errorName: string) => void,
   ) {
+    this.expectedSource = container.srcObject;
     this.playMonitor = new PlayMonitor(
       {
         container,
@@ -64,7 +67,10 @@ export class TrackManager {
 
     this.videoDeadline = setTimeout(() => {
       this.videoDeadline = undefined;
-      if (!this.hasVideo()) this.reportVideoUnavailable("No video track arrived after connecting");
+      if (!this.hasVideo()) {
+        this.detachStream();
+        this.reportVideoUnavailable("No video track arrived after connecting");
+      }
     }, timeoutMs);
   }
 
@@ -143,7 +149,13 @@ export class TrackManager {
 
   resume(): void {
     this.manualPause = false;
+    this.allowSourceReplacement();
     this.syncPlayback();
+  }
+
+  /** Allow an explicit caller action to replace the current source on the next attachment. */
+  allowSourceReplacement(): void {
+    this.expectedSource = this.container.srcObject;
   }
 
   private syncPlayback(): void {
@@ -156,10 +168,13 @@ export class TrackManager {
     }
 
     // 宿主可能带外改写 srcObject；调用方主动驱动时以自家 stream 为唯一真值重新接管。
-    if (!this.stream || !this.hasVideo()) return;
+    if (!this.stream || !this.hasVideo() || this.container.srcObject !== this.expectedSource)
+      return;
 
     const attached = this.container.srcObject !== this.stream;
     if (attached) this.container.srcObject = this.stream;
+    this.attachedStream = this.stream;
+    this.expectedSource = this.stream;
     void this.playMonitor.play({ freshStream: attached });
   }
 
@@ -168,7 +183,7 @@ export class TrackManager {
     this.playMonitor.invalidate();
   }
 
-  stop(): void {
+  stop({ keepAttached = false } = {}): void {
     for (const track of this.watchedVideoTracks)
       track.removeEventListener("ended", this.onVideoEnded);
     this.watchedVideoTracks.clear();
@@ -178,12 +193,16 @@ export class TrackManager {
     this.playMonitor.stopMonitoring();
     this.playMonitor.invalidate();
     this.flowMonitor.stop();
-    this.detachStream();
+    if (!keepAttached) this.detachStream();
     this.stream = undefined;
   }
 
   private detachStream(): void {
-    if (this.stream && this.container.srcObject === this.stream) this.container.srcObject = null;
+    if (this.attachedStream && this.container.srcObject === this.attachedStream) {
+      this.container.srcObject = null;
+      this.expectedSource = null;
+    }
+    this.attachedStream = undefined;
   }
 
   /**

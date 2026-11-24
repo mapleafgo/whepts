@@ -42,7 +42,6 @@ resume.addEventListener("click", () => player.resume());
 | `iceServers` | 可选 ICE 服务器；非空列表替代 OPTIONS 发现。 |
 | `iceMode` | 默认 `trickle`；`complete` 等待 ICE 收集完成后发送完整 offer，不发候选 PATCH。适用于不支持 Trickle ICE 的部署。 |
 | `lazyLoad` | 默认 `true`。至少 50% 可见才挂载播放，隐藏时保持传输。 |
-| `onDiagnostic` | 可选回调，接收远端会话清理失败（`delete-session`）或流量采样异常（`sample-flow`，原因为 `timeout` 或 `request-failed`）的 `WhepDiagnostic`。`cause` 仅含脱敏错误名。包含 `playerId`、诊断发出时的 `state`、`operation`、`phase`、`reason`、`elapsedMs`。有归属的连接尝试时提供 `attemptId`，有 HTTP 响应时提供 `httpStatus`。不含会话 URL、凭据或响应正文，也不会触发重连。 |
 
 ## 浏览器兼容性
 
@@ -63,7 +62,7 @@ resume.addEventListener("click", () => player.resume());
 - `state`：`getting_codecs`、`running`、`restarting`、`failed` 或 `closed`。`running` 表示已启动连接尝试，不代表连通或已出首帧。
 - `paused`：反映媒体元素当前是否没有挂载源，不是传输状态。
 
-候选 PATCH 失败或超过 5 秒未返回时，播放器只丢弃该批候选并通过 `onDiagnostic` 的 `trickle-ice` 上报，会话与播放不受影响；后续候选仍会继续发送。这是有意与部分服务端参考实现（失败即整会话重启）不同的取舍。
+候选 PATCH 失败或超过 5 秒未返回时，播放器只丢弃该批候选并通过 `diagnostic` 事件（`operation: "trickle-ice"`） 上报，会话与播放不受影响；后续候选仍会继续发送。这是有意与部分服务端参考实现（失败即整会话重启）不同的取舍。
 
 ICE 重启（PATCH 返回 `200` + 新 `ETag`）受支持，后续候选使用新的实体标签。服务端用 `406 Not Acceptable` + `application/sdp` + 合法 offer 发反向 offer（草案 §4.3.2）时，播放器生成 answer 并用 `PATCH application/sdp` 提交，期望 `204`；其余 406 按 HTTP 错误处理。
 
@@ -80,15 +79,16 @@ ICE 重启（PATCH 返回 `200` + 新 `ETag`）受支持，后续候选使用新
 | `play:failed` | `{ code, reason, muted }`。原因码为 `autoplay-blocked`、`video-unavailable`、`element-recovery-exhausted` 或 `playback-error`；不要解析英文说明来决定流程。 |
 | `play:stalled`、`flow:stalled` | 观察到播放或流量停滞，包含英文 `reason`。 |
 | `error` | `WebRTCError`，使用 `type` 分类；`phase` 和 `httpStatus` 在适用时提供；建连超时带有 `reason: 'setup-timeout'`。 |
+| `diagnostic` | `WhepDiagnostic`，用于观测脱敏的运行异常。 |
 | `restart`、`close` | 已安排同源重连、本地关闭完成。 |
 
-监听器语义与 DOM 事件派发一致：同一个事件的通知按注册时的快照依次调用，某个监听器抛错不会中断其余监听器，也不会让播放失败；异常通过 `onDiagnostic` 的 `listener-error` 上报（仅含脱敏错误名）。监听器内调用 `close()` 或 `updateUrl()` 时，已经开始的派发仍会完成，之后的旧通知被抑制。`on`、`once`、`addListener` 与 `off`、`removeListener` 使用同一份注册表，第三次参数 `context` 决定监听器内的 `this`。
+监听器语义与 DOM 事件派发一致：同一个事件的通知按注册时的快照依次调用，某个监听器抛错不会中断其余监听器，也不会让播放失败；非诊断监听器的异常通过 `diagnostic` 事件上报，`operation` 为 `listener-error`。监听器内调用 `close()` 或 `updateUrl()` 时，已经开始的派发仍会完成，之后的旧通知被抑制。`on`、`once`、`addListener` 与 `off`、`removeListener` 使用同一份注册表，第三次参数 `context` 决定监听器内的 `this`。
 
 当前导出的 `ErrorTypes` 包含 `SIGNAL_ERROR`、`STATE_ERROR`、`REQUEST_ERROR`、`NOT_FOUND_ERROR`、`VIDEO_ERROR` 和 `OTHER_ERROR`。HTTP 失败统一使用 `REQUEST_ERROR`，具体状态码由 `httpStatus` 表达；草案 §4.1 要求播放器不把状态码映射到具体原因。`NOT_FOUND_ERROR` 仅为保持导出兼容而保留。
 
 ## 诊断
 
-`onDiagnostic` 覆盖四类脱敏事件：`delete-session`（远端会话清理失败）、`sample-flow`（统计采样超时或被拒绝）、`trickle-ice`（候选 PATCH 超时或失败）、`listener-error`（事件监听器抛错）。字段含义见上表；`phase` 与 `elapsedMs` 只在有实际阶段和计时时出现，`cause` 只含错误名。诊断不会改变播放状态，也不会触发重连。
+使用 `player.on("diagnostic", handler)` 订阅 `WhepDiagnostic`。该事件覆盖四类脱敏事件：`delete-session`（远端会话清理失败）、`sample-flow`（统计采样超时或被拒绝）、`trickle-ice`（候选 PATCH 超时或失败）、`listener-error`（非诊断监听器抛错）。每条诊断包含 `playerId`、派发时的 `state`、`operation` 和 `reason`；有对应尝试时提供 `attemptId`，有 HTTP 错误状态时提供 `httpStatus`。诊断不包含会话 URL、凭据、SDP 或响应正文。`phase` 与 `elapsedMs` 只在有实际阶段和计时时出现，`cause` 只含错误名。诊断不会改变播放状态，也不会触发重连。 `close()` 后仍可能收到后台 DELETE 失败的诊断。诊断监听器抛错不会产生新的诊断，也不会中断其他监听器。
 
 ## 当前限制
 
@@ -110,7 +110,7 @@ npm run build:debug
 
 代码检查用 oxlint，格式化用 oxfmt，均使用工具默认配置，不维护项目级规则文件；`npm run lint:fix` 与 `npm run format` 分别自动修复。生产构建仍会剥离全部 `console` 与 `debugger`。
 
-排查问题时运行 `npm run build:debug`，使用本地构建并在 DevTools 控制台开启 Verbose。调试构建保留源码映射，打印脱敏的状态变化、错误阶段、HTTP 状态和清理／采样诊断。生产构建移除控制台日志，应用仍可使用 `error` 和 `onDiagnostic`。
+排查问题时运行 `npm run build:debug`，使用本地构建并在 DevTools 控制台开启 Verbose。调试构建保留源码映射，打印脱敏的状态变化、错误阶段、HTTP 状态和清理／采样诊断。生产构建移除控制台日志，应用仍可使用 `error` 和 `diagnostic` 事件。
 
 `npm test` 构建生产入口并运行 Node 回归测试；它不替代真实浏览器互通测试。`npm pack` 会重新构建，不会自动发布。
 

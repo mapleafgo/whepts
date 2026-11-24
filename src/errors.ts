@@ -3,6 +3,36 @@
  */
 export type ErrorType = string;
 
+const SAFE_ERROR_NAMES = new Set([
+  "Error",
+  "TypeError",
+  "RangeError",
+  "SyntaxError",
+  "ReferenceError",
+  "URIError",
+  "AggregateError",
+  "AbortError",
+  "TimeoutError",
+  "InvalidStateError",
+  "InvalidAccessError",
+  "NotAllowedError",
+  "NotSupportedError",
+  "OperationError",
+  "NetworkError",
+  "SecurityError",
+]);
+
+/** Return a recognized error name without exposing arbitrary exception text. */
+export function safeErrorName(error: unknown): string {
+  try {
+    const name = error instanceof Error ? error.name : undefined;
+    if (typeof name === "string" && SAFE_ERROR_NAMES.has(name)) return name;
+  } catch {
+    // 调用方提供的异常对象可能有抛错的属性访问器。
+  }
+  return "unknown";
+}
+
 export type ErrorPhase = "configuration" | "signaling" | "connection";
 
 interface WebRTCErrorOptions extends ErrorOptions {

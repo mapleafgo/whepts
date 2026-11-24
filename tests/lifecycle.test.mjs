@@ -89,11 +89,11 @@ test("a pending stats request prevents overlapping samples", async (t) => {
     url: "https://player.example/a",
     container,
     lazyLoad: false,
-    onDiagnostic(record) {
-      diagnostics.push(record);
-      throw new Error("Host flow diagnostic observer failed");
-    },
   });
+  player.on("diagnostic", () => {
+    throw new Error("Host flow diagnostic observer failed");
+  });
+  player.on("diagnostic", (record) => diagnostics.push(record));
   t.after(() => player.close());
   await setImmediate();
   peer.onconnectionstatechange();
@@ -578,6 +578,139 @@ test("autoplay denial reports a reason code without muting or retrying", async (
   assert.equal(player.state, "running");
 });
 
+const stream = (...kinds) => {
+  const tracks = kinds.map((kind) =>
+    Object.assign(new EventTarget(), { kind, readyState: "live" }),
+  );
+  return { tracks, getTracks: () => tracks };
+};
+async function setupMediaProbe(t, { lazyLoad = false, pendingPlay = false } = {}) {
+  let observer, peer, finishPlay;
+  class Peer {
+    connectionState = "connected";
+    addTransceiver() {}
+    async createOffer() {
+      if (this.ontrack) peer = this;
+      return { type: "offer", sdp: "v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:0\r\n" };
+    }
+    async setLocalDescription() {}
+    close() {}
+  }
+  globalThis.RTCPeerConnection = Peer;
+  globalThis.IntersectionObserver = class {
+    constructor(cb) {
+      observer = cb;
+    }
+    observe() {}
+    disconnect() {}
+  };
+  t.after(() => {
+    delete globalThis.RTCPeerConnection;
+    delete globalThis.IntersectionObserver;
+  });
+  t.mock.method(globalThis, "fetch", (_url, { method }) =>
+    method === "POST"
+      ? new Promise(() => {})
+      : Promise.resolve(new Response(null, { status: 204 })),
+  );
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let source = null;
+  const writes = [];
+  class Media extends EventTarget {
+    paused = true;
+    currentTime = 0;
+    plays = 0;
+    get srcObject() {
+      return source;
+    }
+    set srcObject(value) {
+      source = value;
+      this.paused = true;
+      this.error = null;
+      writes.push(value);
+    }
+    play() {
+      ++this.plays;
+      this.paused = false;
+      return pendingPlay
+        ? new Promise((r) => {
+            finishPlay = r;
+          })
+        : Promise.resolve();
+    }
+  }
+  const container = new Media();
+  const player = new WebRTCWhep({ url: "https://fixture.invalid/a", container, lazyLoad });
+  t.after(() => player.close());
+  const events = { success: 0, stalled: [], failed: [] };
+  player.on("play:success", () => events.success++);
+  player.on("play:stalled", (x) => events.stalled.push(x.reason));
+  player.on("play:failed", (x) => events.failed.push(x.code));
+  await setImmediate();
+  assert.equal(player.state, "running");
+  assert.equal(typeof peer?.ontrack, "function");
+  return {
+    player,
+    container,
+    writes,
+    events,
+    peer: () => peer,
+    finish: () => finishPlay(),
+    track: (s, i = 0) => peer.ontrack({ streams: [s], track: s.tracks[i] }),
+    show: (ratio) => observer([{ isIntersecting: ratio > 0, intersectionRatio: ratio }]),
+  };
+}
+test("11: second track from same stream preserves pending play and startup verification", async (t) => {
+  const f = await setupMediaProbe(t, { pendingPlay: true });
+  const s = stream("video", "audio");
+  f.track(s);
+  f.track(s, 1);
+  f.finish();
+  await setImmediate();
+  t.mock.timers.tick(500);
+  assert.deepEqual(
+    { plays: f.container.plays, success: f.events.success, verify: f.events.stalled.length },
+    { plays: 1, success: 1, verify: 1 },
+  );
+});
+
+test("updateUrl replaces an owned source without an intermediate null", async (t) => {
+  const f = await setupMediaProbe(t);
+  const a = stream("video");
+  const b = stream("video");
+  f.track(a);
+  await setImmediate();
+  const before = f.container.plays;
+  f.player.updateUrl("https://fixture.invalid/b");
+  await setImmediate();
+  assert.equal(f.container.srcObject, a);
+  f.track(b);
+  await setImmediate();
+  assert.deepEqual(f.writes, [a, b]);
+  assert.equal(f.container.plays - before, 1);
+  f.player.close();
+  assert.equal(f.container.srcObject, null);
+});
+
+test("decode errors after resolved play share a finite recovery budget", async (t) => {
+  const f = await setupMediaProbe(t);
+  f.track(stream("video"));
+  await setImmediate();
+  for (let i = 0; i < 5; i++) {
+    f.container.error = { code: 3 };
+    f.container.dispatchEvent(new Event("error"));
+    t.mock.timers.tick(1000);
+    await setImmediate();
+  }
+  assert.deepEqual(
+    { recoveries: f.container.plays - 1, failures: f.events.failed },
+    {
+      recoveries: 3,
+      failures: ["element-recovery-exhausted"],
+    },
+  );
+});
+
 test("pending play rejection after a host stream takeover is ignored", async (t) => {
   let peer;
   class Peer {
@@ -874,11 +1007,11 @@ test("close deletes a known session before its answer body settles", async (t) =
         url: "https://player.example/a",
         container: { srcObject: null, addEventListener() {}, removeEventListener() {} },
         lazyLoad: false,
-        onDiagnostic(diagnostic) {
-          diagnostics.push(diagnostic);
-          throw new Error("Host diagnostic observer failed");
-        },
       });
+      player.on("diagnostic", () => {
+        throw new Error("Host diagnostic observer failed");
+      });
+      player.on("diagnostic", (record) => diagnostics.push(record));
       t.after(() => player.close());
       await setImmediate();
       assert.ok(requests.some(([method]) => method === "POST"));
@@ -970,8 +1103,8 @@ test("a late POST response deletes only the retired session", async (t) => {
     token: "fixture-token",
     container: { srcObject: null, addEventListener() {}, removeEventListener() {} },
     lazyLoad: false,
-    onDiagnostic: (record) => diagnostics.push(record),
   });
+  player.on("diagnostic", (record) => diagnostics.push(record));
   t.after(() => player.close());
   await setImmediate();
   assert.ok(postedA);
@@ -1307,6 +1440,10 @@ test("a 406 counter-offer completes the session with an SDP PATCH", async (t) =>
   const calls = [];
   let issuedPeer;
   let emitTrickle;
+  let acknowledgeAnswer;
+  const answerAck = new Promise((resolve) => {
+    acknowledgeAnswer = resolve;
+  });
   // 草案示例的 406 响应带 o= 与 ice-pwd；校验按此最小结构判定。
   const counterOffer =
     "v=0\r\no=- 2438602337097565327 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=ice-ufrag:server\r\na=ice-pwd:server-pwd\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:0\r\na=sendonly\r\n";
@@ -1344,7 +1481,7 @@ test("a 406 counter-offer completes the session with an SDP PATCH", async (t) =>
     const type = new Headers(headers).get("Content-Type");
     calls.push([method, type, body]);
     if (method === "OPTIONS") return new Response(null, { status: 204 });
-    if (method === "POST")
+    if (method === "POST") {
       return new Response(counterOffer, {
         status: 406,
         headers: {
@@ -1352,6 +1489,8 @@ test("a 406 counter-offer completes the session with an SDP PATCH", async (t) =>
           "Content-Type": "application/sdp",
         },
       });
+    }
+    if (method === "PATCH" && type === "application/sdp") await answerAck;
     if (method === "PATCH") return new Response(null, { status: 204 });
     return new Response(null, { status: 204 });
   });
@@ -1372,71 +1511,218 @@ test("a 406 counter-offer completes the session with an SDP PATCH", async (t) =>
   assert.equal(patches.length, 1, JSON.stringify(calls));
   assert.equal(patches[0][1], "application/sdp");
   // 反向 offer 之后，候选片段必须使用 answer 的 ICE 凭据与 mid 作用域。
-  emitTrickle({ sdpMid: "0", candidate: "candidate:after-answer" });
+  emitTrickle({ sdpMid: "0", usernameFragment: "client", candidate: "candidate:old" });
+  emitTrickle({ sdpMid: "0", usernameFragment: "client-answer", candidate: "candidate:new" });
+  await setImmediate();
+  assert.equal(calls.filter(([method]) => method === "PATCH").length, 1);
+  acknowledgeAnswer();
   await setImmediate();
   const trickles = calls.filter(
     ([method, type]) => method === "PATCH" && type === "application/trickle-ice-sdpfrag",
   );
   assert.equal(trickles.length, 1, JSON.stringify(calls));
   assert.match(trickles[0][2], /a=ice-ufrag:client-answer/);
+  assert.match(trickles[0][2], /candidate:new/);
+  assert.doesNotMatch(trickles[0][2], /candidate:old/);
   assert.doesNotMatch(trickles[0][2], /a=ice-ufrag:client\r\n/);
 });
-test("an expired counter-offer is refused without sending an answer", async (t) => {
-  const calls = [];
-  const counterOffer =
-    "v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=ice-ufrag:server\r\na=ice-pwd:server-pwd\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:0\r\na=sendonly\r\n";
+test("HTTP transport and body failures report request errors in signaling", async (t) => {
+  const sdp =
+    "v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=ice-ufrag:server\r\na=ice-pwd:server-pwd\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:0\r\n";
+  class Peer {
+    addTransceiver() {}
+    async createOffer() {
+      return { type: "offer", sdp };
+    }
+    async setRemoteDescription() {}
+    async setLocalDescription() {}
+    async createAnswer() {
+      return { type: "answer", sdp };
+    }
+    close() {}
+  }
+  for (const [key, value] of [
+    ["RTCPeerConnection", Peer],
+    ["RTCSessionDescription", class {}],
+  ]) {
+    Object.defineProperty(globalThis, key, { configurable: true, value });
+    t.after(() => Reflect.deleteProperty(globalThis, key));
+  }
+  let mode;
+  t.mock.method(globalThis, "fetch", async (_url, { method }) => {
+    if (method === mode) throw new TypeError("Private network detail");
+    if (method === "POST" && mode === "body") {
+      const response = new Response(null, { status: 201, headers: { Location: "/session" } });
+      response.text = async () => {
+        throw new TypeError("Private body detail");
+      };
+      return response;
+    }
+    if (method === "POST")
+      return new Response(sdp, {
+        status: 406,
+        headers: {
+          Location: "/session",
+          "Content-Type": "application/sdp",
+        },
+      });
+    return new Response(null, { status: method === "PATCH" ? 503 : 204 });
+  });
+  for (const [scenario, status] of [
+    ["OPTIONS", undefined],
+    ["POST", undefined],
+    ["body", 201],
+    ["PATCH", undefined],
+    ["status", 503],
+  ]) {
+    await t.test(scenario, async (t) => {
+      mode = scenario;
+      const player = new WebRTCWhep({
+        url: "https://player.example/a",
+        lazyLoad: false,
+        container: { srcObject: null, addEventListener() {}, removeEventListener() {} },
+      });
+      t.after(() => player.close());
+      const errors = [];
+      player.on("error", (error) => errors.push(error));
+      await setImmediate();
+      assert.equal(errors.length, 1);
+      const [error] = errors;
+      assert.deepEqual(
+        [error.type, error.phase, error.httpStatus],
+        ["RequestError", "signaling", status],
+      );
+      assert.doesNotMatch(error.message, /Private/);
+      assert.equal(error.cause, scenario === "status" ? undefined : "TypeError");
+    });
+  }
+});
+
+test("complete ICE waits for reverse answer candidates before sending SDP", async (t) => {
+  const sdp =
+    "v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=ice-ufrag:server\r\na=ice-pwd:server-pwd\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:0\r\n";
+  let peer;
+  const patches = [];
+  class Peer extends EventTarget {
+    iceGatheringState = "complete";
+    addTransceiver() {}
+    async createOffer() {
+      return { type: "offer", sdp };
+    }
+    async setRemoteDescription() {}
+    async createAnswer() {
+      return { type: "answer", sdp };
+    }
+    async setLocalDescription(description) {
+      this.localDescription = description;
+      if (description.type === "answer") {
+        peer = this;
+        this.iceGatheringState = "new";
+      }
+    }
+    close() {}
+  }
+  t.mock.method(globalThis, "fetch", async (_url, { method, body }) => {
+    if (method === "POST")
+      return new Response(sdp, {
+        status: 406,
+        headers: {
+          Location: "/session",
+          "Content-Type": "application/sdp",
+        },
+      });
+    if (method === "PATCH") patches.push(body);
+    return new Response(null, { status: 204 });
+  });
+  Object.defineProperty(globalThis, "RTCPeerConnection", { configurable: true, value: Peer });
   Object.defineProperty(globalThis, "RTCSessionDescription", {
     configurable: true,
     value: class {},
   });
-  t.after(() => Reflect.deleteProperty(globalThis, "RTCSessionDescription"));
-  class Peer {
-    addTransceiver() {}
-    async createOffer() {
-      return {
-        type: "offer",
-        sdp: "v=0\r\na=ice-ufrag:client\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:0\r\n",
-      };
-    }
-    async setLocalDescription() {}
-    async setRemoteDescription() {}
-    async createAnswer() {
-      return {
-        type: "answer",
-        sdp: "v=0\r\na=ice-ufrag:client-answer\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:0\r\n",
-      };
-    }
-    close() {}
-  }
-  Object.defineProperty(globalThis, "RTCPeerConnection", { configurable: true, value: Peer });
-  t.after(() => Reflect.deleteProperty(globalThis, "RTCPeerConnection"));
-  t.mock.method(globalThis, "fetch", async (url, { method }) => {
-    calls.push(method);
-    if (method === "OPTIONS") return new Response(null, { status: 204 });
-    if (method === "POST")
-      return new Response(counterOffer, {
-        status: 406,
-        headers: {
-          Location: `${new URL(url).pathname}/session`,
-          "Content-Type": 'application/sdp; valid-until="Thu, 01 Jan 1970 00:00:00 GMT"',
-        },
-      });
-    return new Response(null, { status: 204 });
+  t.after(() => {
+    Reflect.deleteProperty(globalThis, "RTCPeerConnection");
+    Reflect.deleteProperty(globalThis, "RTCSessionDescription");
   });
   const player = new WebRTCWhep({
     url: "https://player.example/a",
-    container: { srcObject: null, addEventListener() {}, removeEventListener() {} },
+    iceMode: "complete",
     lazyLoad: false,
+    container: { srcObject: null, addEventListener() {}, removeEventListener() {} },
   });
   t.after(() => player.close());
-  const errors = [];
-  player.on("error", (error) => errors.push([error.type, error.phase]));
   await setImmediate();
-  assert.equal(errors.length, 1);
-  assert.equal(errors[0][0], "SignalError");
-  assert.equal(player.state, "failed");
-  assert.equal(calls.includes("PATCH"), false);
+  assert.ok(peer);
+  assert.deepEqual(patches, []);
+  peer.localDescription = { type: "answer", sdp: sdp + "a=candidate:final\r\n" };
+  peer.iceGatheringState = "complete";
+  peer.dispatchEvent(new Event("icegatheringstatechange"));
+  await setImmediate();
+  assert.deepEqual(patches, [peer.localDescription.sdp]);
 });
+
+for (const expiresDuringAnswer of [false, true]) {
+  test(`an expired counter-offer is refused ${expiresDuringAnswer ? "after" : "before"} generating an answer`, async (t) => {
+    const deadline = 2000;
+    const now = t.mock.method(Date, "now", () =>
+      expiresDuringAnswer ? deadline - 1 : deadline + 1,
+    );
+    const calls = [];
+    const counterOffer =
+      "v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=ice-ufrag:server\r\na=ice-pwd:server-pwd\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:0\r\na=sendonly\r\n";
+    Object.defineProperty(globalThis, "RTCSessionDescription", {
+      configurable: true,
+      value: class {},
+    });
+    t.after(() => Reflect.deleteProperty(globalThis, "RTCSessionDescription"));
+    class Peer {
+      addTransceiver() {}
+      async createOffer() {
+        return {
+          type: "offer",
+          sdp: "v=0\r\na=ice-ufrag:client\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:0\r\n",
+        };
+      }
+      async setLocalDescription() {}
+      async setRemoteDescription() {}
+      async createAnswer() {
+        now.mock.mockImplementation(() => deadline + 1);
+        return {
+          type: "answer",
+          sdp: "v=0\r\na=ice-ufrag:client-answer\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:0\r\n",
+        };
+      }
+      close() {}
+    }
+    Object.defineProperty(globalThis, "RTCPeerConnection", { configurable: true, value: Peer });
+    t.after(() => Reflect.deleteProperty(globalThis, "RTCPeerConnection"));
+    t.mock.method(globalThis, "fetch", async (url, { method }) => {
+      calls.push(method);
+      if (method === "OPTIONS") return new Response(null, { status: 204 });
+      if (method === "POST")
+        return new Response(counterOffer, {
+          status: 406,
+          headers: {
+            Location: `${new URL(url).pathname}/session`,
+            "Content-Type": `application/sdp; valid-until="${new Date(deadline).toUTCString()}"`,
+          },
+        });
+      return new Response(null, { status: 204 });
+    });
+    const player = new WebRTCWhep({
+      url: "https://player.example/a",
+      container: { srcObject: null, addEventListener() {}, removeEventListener() {} },
+      lazyLoad: false,
+    });
+    t.after(() => player.close());
+    const errors = [];
+    player.on("error", (error) => errors.push([error.type, error.phase]));
+    await setImmediate();
+    assert.equal(errors.length, 1);
+    assert.equal(errors[0][0], "SignalError");
+    assert.equal(player.state, "failed");
+    assert.equal(calls.includes("PATCH"), false);
+  });
+}
 
 test("a 406 without a usable SDP still fails as an HTTP error", async (t) => {
   for (const headers of [{ Location: "/session" }, { "Content-Type": "application/sdp" }]) {
@@ -1529,10 +1815,10 @@ test("an ICE restart PATCH accepts 200 and rotates the entity tag", async (t) =>
   const errors = [];
   const player = new WebRTCWhep({
     url: "https://player.example/a",
-    onDiagnostic: (record) => diagnostics.push(record),
     container: { srcObject: null, addEventListener() {}, removeEventListener() {} },
     lazyLoad: false,
   });
+  player.on("diagnostic", (record) => diagnostics.push(record));
   t.after(() => player.close());
   player.on("error", (error) => errors.push(error.type));
   await setImmediate();
@@ -1610,11 +1896,11 @@ test("late PATCH completion cannot affect a replacement session", async (t) => {
       const retiredErrors = [];
       const player = new WebRTCWhep({
         url: "https://player.example/a",
-        onDiagnostic: (record) => diagnostics.push(record),
         user: "viewer",
         container: { srcObject: null, addEventListener() {}, removeEventListener() {} },
         lazyLoad: false,
       });
+      player.on("diagnostic", (record) => diagnostics.push(record));
       t.after(() => player.close());
       await setImmediate();
       assert.equal(fragments.length, 1);
@@ -1780,7 +2066,7 @@ test("ICE link parsing follows RFC 8288 and Chromium acceptance rules", async (t
     },
     {
       name: "TURN without credentials is dropped",
-      link: '<turn:noauth.example.test>; rel="ice-server",<stun:stun.example.test>; rel="ice-server"',
+      link: '<turn:noauth.example.test>; rel="ice-server",<stun:relay.example.test:bad>; rel="ice-server",<turn:relay.example.test>; rel="ice-server"; username="viewer"; credential="fixture"; credential-type=oauth,<stun:stun.example.test>; rel="ice-server"',
       expected: [{ urls: ["stun:stun.example.test"] }],
     },
     {
@@ -2383,8 +2669,8 @@ test("a throwing listener cannot stop later listeners of the same event", async 
     url: "https://player.example/a",
     container: { srcObject: null, addEventListener() {}, removeEventListener() {} },
     lazyLoad: false,
-    onDiagnostic: (record) => diagnostics.push(record),
   });
+  player.on("diagnostic", (record) => diagnostics.push(record));
   t.after(() => player.close());
   const seen = [];
   player.on("state:change", () => {
@@ -2401,6 +2687,59 @@ test("a throwing listener cannot stop later listeners of the same event", async 
   assert.equal(listener[0].reason, "request-failed");
   assert.equal(listener[0].cause, "Error");
   assert.ok(!JSON.stringify(diagnostics).includes("Private listener detail"));
+});
+
+test("listener diagnostics only expose recognized error names", (t) => {
+  const player = new WebRTCWhep({
+    url: "https://player.example/a",
+    container: { srcObject: null, addEventListener() {}, removeEventListener() {} },
+    lazyLoad: false,
+  });
+  t.after(() => player.close());
+  const causes = [];
+  player.on("diagnostic", ({ cause }) => causes.push(cause));
+  for (const error of [
+    Object.assign(new Error(), { name: "Private fixture detail" }),
+    Object.defineProperty(new Error(), "name", {
+      get() {
+        throw new Error("Getter failure");
+      },
+    }),
+    new TypeError("Private fixture detail"),
+  ]) {
+    player.once("restart", () => {
+      throw error;
+    });
+    assert.doesNotThrow(() => player.emit("restart"));
+  }
+  assert.deepEqual(causes, ["unknown", "unknown", "TypeError"]);
+});
+
+test("diagnostic listener failures do not inspect the thrown object or interrupt dispatch", (t) => {
+  const player = new WebRTCWhep({
+    url: "https://player.example/a",
+    container: { srcObject: null, addEventListener() {}, removeEventListener() {} },
+    lazyLoad: false,
+  });
+  t.after(() => player.close());
+  let nameReads = 0;
+  const seen = [];
+  player.on("diagnostic", () => {
+    throw Object.defineProperty(new Error("Private detail"), "name", {
+      get() {
+        nameReads++;
+        throw new Error("Unexpected name read");
+      },
+    });
+  });
+  player.on("diagnostic", (record) => seen.push(record.operation));
+  player.on("restart", () => {
+    throw new Error("Fixture failure");
+  });
+
+  assert.doesNotThrow(() => player.emit("restart"));
+  assert.equal(nameReads, 0);
+  assert.deepEqual(seen, ["listener-error"]);
 });
 
 test("re-registering the same listener keeps a single registration", async (t) => {
@@ -2424,6 +2763,49 @@ test("re-registering the same listener keeps a single registration", async (t) =
   player.updateUrl("https://player.example/b");
   await setImmediate();
   assert.equal(calls, before, "removed listener must not run");
+});
+
+test("persistent and once registrations of the same listener coexist", (t) => {
+  const player = new WebRTCWhep({
+    url: "https://player.example/a",
+    container: { srcObject: null, addEventListener() {}, removeEventListener() {} },
+    lazyLoad: false,
+  });
+  t.after(() => player.close());
+  let calls = 0;
+  const listener = () => calls++;
+  player.on("restart", listener);
+  player.once("restart", listener);
+  player.emit("restart");
+  player.emit("restart");
+  assert.equal(calls, 3);
+
+  player.once("restart", listener);
+  player.off("restart", listener, undefined, true);
+  player.emit("restart");
+  assert.equal(calls, 4);
+  player.once("restart", listener);
+  player.off("restart", listener);
+  player.emit("restart");
+  assert.equal(calls, 4);
+});
+
+test("removing the same callback from one event leaves the other event subscribed", (t) => {
+  const player = new WebRTCWhep({
+    url: "https://player.example/a",
+    container: { srcObject: null, addEventListener() {}, removeEventListener() {} },
+    lazyLoad: false,
+  });
+  t.after(() => player.close());
+  let calls = 0;
+  const listener = () => calls++;
+  player.on("restart", listener);
+  player.on("close", listener);
+  player.off("restart", listener);
+  player.emit("restart");
+  assert.equal(calls, 0);
+  player.close();
+  assert.equal(calls, 1);
 });
 
 test("removing a listener keeps other registrations of the same function", async (t) => {
@@ -2457,8 +2839,8 @@ test("closing inside a throwing listener leaves the player consistent", async (t
     url: "https://player.example/a",
     container: { srcObject: null, addEventListener() {}, removeEventListener() {} },
     lazyLoad: false,
-    onDiagnostic: (record) => diagnostics.push(record),
   });
+  player.on("diagnostic", (record) => diagnostics.push(record));
   t.after(() => player.close());
   const seen = [];
   player.on("state:change", ({ to }) => {
@@ -2524,8 +2906,8 @@ test("listeners registered through addListener are isolated too", async (t) => {
     url: "https://player.example/a",
     container: { srcObject: null, addEventListener() {}, removeEventListener() {} },
     lazyLoad: false,
-    onDiagnostic: (record) => diagnostics.push(record),
   });
+  player.on("diagnostic", (record) => diagnostics.push(record));
   t.after(() => player.close());
   const seen = [];
   player.addListener("state:change", () => {
@@ -2548,8 +2930,8 @@ test("a throwing once listener is isolated like a persistent one", async (t) => 
     url: "https://player.example/a",
     container: { srcObject: null, addEventListener() {}, removeEventListener() {} },
     lazyLoad: false,
-    onDiagnostic: (record) => diagnostics.push(record),
   });
+  player.on("diagnostic", (record) => diagnostics.push(record));
   t.after(() => player.close());
   const seen = [];
   player.on("state:change", () => {
@@ -2616,8 +2998,8 @@ test("a hung candidate PATCH drops only its batch and keeps the session", async 
     url: "https://player.example/a",
     container: { srcObject: null, addEventListener() {}, removeEventListener() {} },
     lazyLoad: false,
-    onDiagnostic: (record) => diagnostics.push(record),
   });
+  player.on("diagnostic", (record) => diagnostics.push(record));
   t.after(() => player.close());
   await setImmediate();
   peer.onicecandidate({ candidate: { sdpMid: "0", candidate: "candidate:first" } });
@@ -2681,7 +3063,8 @@ test("a reclaimed element is not detached by a pause triggered by visibility", a
   const player = new WebRTCWhep({ url: "https://player.example/a", container });
   t.after(() => player.close());
   await setImmediate();
-  const stream = { getTracks: () => [{ kind: "video" }] };
+  const video = { kind: "video" };
+  const stream = { getTracks: () => [video] };
   peer.ontrack({ streams: [stream] });
   const show = (ratio) => report([{ isIntersecting: ratio > 0, intersectionRatio: ratio }]);
   show(1);
@@ -2693,6 +3076,10 @@ test("a reclaimed element is not detached by a pause triggered by visibility", a
   show(0);
   assert.equal(container.srcObject, hostStream);
   show(1);
+  assert.equal(container.srcObject, hostStream);
+  peer.ontrack({ streams: [stream] });
+  assert.equal(container.srcObject, hostStream);
+  player.resume();
   assert.equal(container.srcObject, stream);
 });
 
@@ -2745,8 +3132,8 @@ test("a retired attempt PATCH failure is reported without touching the new sessi
     url: "https://player.example/a",
     container: { srcObject: null, addEventListener() {}, removeEventListener() {} },
     lazyLoad: false,
-    onDiagnostic: (record) => diagnostics.push(record),
   });
+  player.on("diagnostic", (record) => diagnostics.push(record));
   t.after(() => player.close());
   await setImmediate();
   peer.onicecandidate({ candidate: { sdpMid: "0", candidate: "candidate:first" } });
@@ -2808,8 +3195,8 @@ test("a candidate PATCH failure is attributed to the attempt that sent it", asyn
     url: "https://player.example/a",
     container: { srcObject: null, addEventListener() {}, removeEventListener() {} },
     lazyLoad: false,
-    onDiagnostic: (record) => diagnostics.push(record),
   });
+  player.on("diagnostic", (record) => diagnostics.push(record));
   t.after(() => player.close());
   await setImmediate();
   peer.onicecandidate({ candidate: { sdpMid: "0", candidate: "candidate:first" } });
@@ -3027,8 +3414,8 @@ test("stats rejection reports a request-failed diagnostic instead of a stall", a
     url: "https://player.example/a",
     container,
     lazyLoad: false,
-    onDiagnostic: (record) => diagnostics.push(record),
   });
+  player.on("diagnostic", (record) => diagnostics.push(record));
   t.after(() => player.close());
   await setImmediate();
   peer.onconnectionstatechange();
@@ -3215,8 +3602,8 @@ test("an external abort during cleanup is reported as a request failure", async 
     url: "https://player.example/a",
     container: { srcObject: null, addEventListener() {}, removeEventListener() {} },
     lazyLoad: false,
-    onDiagnostic: (record) => diagnostics.push(record),
   });
+  player.on("diagnostic", (record) => diagnostics.push(record));
   await setImmediate();
   player.close();
   cleanupDeadline.abort(new DOMException("Private abort detail", "AbortError"));

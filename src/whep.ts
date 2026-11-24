@@ -8,7 +8,7 @@ import { CodecDetector } from "./core/codec.js";
 import { ConnectionManager } from "./core/connection.js";
 import { HttpClient } from "./core/http.js";
 import { TrackManager } from "./core/track.js";
-import { ErrorTypes, WebRTCError } from "./errors.js";
+import { ErrorTypes, safeErrorName, WebRTCError } from "./errors.js";
 import { MonitorScheduler } from "./monitors/scheduler.js";
 
 // 涵盖信令和首次传输连通，不限制已建立的会话。
@@ -27,8 +27,8 @@ let nextPlayerId = 0;
 /** Keep only a stable error kind; raw messages may contain server internals. */
 function sanitizeCause(error: unknown): string | undefined {
   if (error instanceof WebRTCError) return undefined;
-  const name = error instanceof Error ? error.name : undefined;
-  return name === undefined || name === "Error" ? undefined : name;
+  const name = safeErrorName(error);
+  return name === "unknown" || name === "Error" ? undefined : name;
 }
 
 /** Distinguish our own cleanup deadline from any other abort cause. */
@@ -63,7 +63,7 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
   private session?: WhepSession | null;
   private readonly playerId = ++nextPlayerId;
   private nextAttemptId = 0;
-  private attempt?: { id: number; controller: AbortController };
+  private attempt?: { id: number; controller: AbortController; startedAt: number };
   private connectionDeadline?: ReturnType<typeof setTimeout>;
   private answerApplied = false;
   private candidateDrain?: AbortSignal;
@@ -101,7 +101,7 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
     };
 
     // 创建调度器实例
-    this.scheduler = new MonitorScheduler();
+    this.scheduler = new MonitorScheduler({ playerId: this.playerId });
 
     this.trackManager = new TrackManager(
       this.conf.container,
@@ -189,7 +189,7 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
         // 探测失败是预期内的降级，不是故障：只在调试构建以 debug 级别提示。
         console.debug("[WhepTS] Codec detection failed", {
           playerId: this.playerId,
-          error: error instanceof Error ? error.name : "unknown",
+          error: safeErrorName(error),
         });
         this.handleCodecsDetected([]);
       });
@@ -238,7 +238,7 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
     this.notify("state:change", { from, to });
   }
 
-  private cleanupSession(): void {
+  private cleanupSession({ keepAttached = false } = {}): void {
     if (this.restartTimeout) {
       clearTimeout(this.restartTimeout);
       this.restartTimeout = undefined;
@@ -253,7 +253,7 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
     const peer = this.connectionManager.detachPeer();
     if (session) this.deleteSession(session, attempt?.id, peer);
     else peer?.close();
-    this.trackManager.stop();
+    this.trackManager.stop({ keepAttached });
     this.answerApplied = false;
     this.candidateDrain = undefined;
     this.queuedCandidates = [];
@@ -297,18 +297,14 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
     details: Omit<WhepDiagnostic, "playerId" | "attemptId" | "state">,
     attemptId?: number,
   ): void {
-    try {
-      const diagnostic: WhepDiagnostic = {
-        playerId: this.playerId,
-        ...(attemptId === undefined ? {} : { attemptId }),
-        state: this.state,
-        ...details,
-      };
-      console.warn("[WhepTS] Operation failed", diagnostic);
-      this.conf.onDiagnostic?.(diagnostic);
-    } catch {
-      // 诊断回调不得干扰监控或清理。
-    }
+    const diagnostic: WhepDiagnostic = {
+      playerId: this.playerId,
+      ...(attemptId === undefined ? {} : { attemptId }),
+      state: this.state,
+      ...details,
+    };
+    console.warn("[WhepTS] Operation failed", diagnostic);
+    this.notify("diagnostic", diagnostic);
   }
 
   private handleTransportFailure(): void {
@@ -326,6 +322,7 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
     }
 
     this.reconnectCount++;
+    const attempt = this.attempt;
     this.cleanupSession();
     const timer = setTimeout(() => {
       if (this.restartTimeout !== timer || this.state !== "restarting") return;
@@ -339,6 +336,7 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
 
     this.notifyError(
       new WebRTCError(ErrorTypes.SIGNAL_ERROR, "Peer connection was lost", { phase: "connection" }),
+      attempt,
     );
     if (this.restartTimeout === timer) this.notify("restart");
   }
@@ -355,7 +353,11 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
   private start(): void {
     if (this.state !== "running" || this.attempt) return;
 
-    const attempt = { id: ++this.nextAttemptId, controller: new AbortController() };
+    const attempt = {
+      id: ++this.nextAttemptId,
+      controller: new AbortController(),
+      startedAt: performance.now(),
+    };
     this.attempt = attempt;
     const progress = { phase: "signaling" as ErrorPhase };
     this.connectionDeadline = setTimeout(() => {
@@ -396,7 +398,7 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
       signal.throwIfAborted();
       progress.phase = "connection";
       if ("counterOffer" in result) {
-        await this.answerCounterOffer(result, signal);
+        await this.answerCounterOffer(result, signal, progress);
         return;
       }
       await this.handleOfferResponse(result.answer, signal);
@@ -406,6 +408,7 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
   }
 
   private failSetup(phase: ErrorPhase, error: unknown, reason?: WebRTCError["reason"]): void {
+    const attempt = this.attempt;
     this.cleanupSession();
     this.transition("failed");
     if (this.state !== "failed") return;
@@ -418,7 +421,7 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
           ? "WHEP signaling failed"
           : "Peer connection failed";
     const httpStatus = error instanceof WebRTCError ? error.httpStatus : undefined;
-    const cause = sanitizeCause(error);
+    const cause = error instanceof WebRTCError ? error.cause : sanitizeCause(error);
     this.notifyError(
       new WebRTCError(type, message, {
         phase,
@@ -426,6 +429,7 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
         reason,
         ...(cause === undefined ? {} : { cause }),
       }),
+      attempt,
     );
   }
 
@@ -441,7 +445,15 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
   }
 
   private reportListenerFailure(event: string, error: unknown): void {
-    const cause = error instanceof Error ? error.name : "unknown";
+    if (event === "diagnostic") {
+      try {
+        console.debug("[WhepTS] Diagnostic listener failed", { playerId: this.playerId });
+      } catch {
+        // 调试日志失败也不能中断诊断派发。
+      }
+      return;
+    }
+    const cause = safeErrorName(error);
     this.notifyDiagnostic({ operation: "listener-error", reason: "request-failed", cause });
     // 监听器异常属于调用方 bug，通过诊断通道对外，日志只作调试提示。
     console.debug("[WhepTS] Public event listener failed", {
@@ -451,13 +463,17 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
     });
   }
 
-  /** Wrappers indexed per listener and context so each registration can be removed alone. */
-  private guardedListeners = new WeakMap<object, Map<unknown, (...values: unknown[]) => unknown>>();
+  /** Separate persistent and one-shot wrappers so the emitter can expire only the latter. */
+  private guardedListeners = new WeakMap<
+    object,
+    Map<keyof WhepEvents, Map<unknown, Map<boolean, (...values: unknown[]) => unknown>>>
+  >();
 
   private guardListener<K extends keyof WhepEvents>(
     event: K,
     listener: EventEmitter.EventListener<WhepEvents, K>,
-    context?: unknown,
+    context: unknown,
+    once: boolean,
   ): EventEmitter.EventListener<WhepEvents, K> {
     const target = context ?? this;
     const guarded = (...args: Parameters<EventEmitter.EventListener<WhepEvents, K>>): void => {
@@ -470,23 +486,18 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
     };
     const wrapper = guarded as EventEmitter.EventListener<WhepEvents, K>;
     const key = listener as object;
-    const byContext =
-      this.guardedListeners.get(key) ?? new Map<unknown, (...values: unknown[]) => unknown>();
-    // 同一引用同一 context 只保留一个包装，避免旧包装失去簿记后无法移除。
-    const previous = byContext.get(context);
+    const byEvent = this.guardedListeners.get(key) ?? new Map();
+    const byContext = byEvent.get(event) ?? new Map();
+    const byMode = byContext.get(context) ?? new Map();
+    // 同一事件、回调、context 和注册模式仍然去重。
+    const previous = byMode.get(once);
     if (previous !== undefined)
       super.removeListener(event, previous as EventEmitter.EventListener<WhepEvents, K>, context);
-    byContext.set(context, guarded as (...values: unknown[]) => unknown);
-    this.guardedListeners.set(key, byContext);
+    byMode.set(once, guarded as (...values: unknown[]) => unknown);
+    byContext.set(context, byMode);
+    byEvent.set(event, byContext);
+    this.guardedListeners.set(key, byEvent);
     return wrapper;
-  }
-
-  private unwrapListener<K extends keyof WhepEvents>(
-    listener: EventEmitter.EventListener<WhepEvents, K>,
-    context?: unknown,
-  ): EventEmitter.EventListener<WhepEvents, K> {
-    return (this.guardedListeners.get(listener as object)?.get(context) ??
-      listener) as EventEmitter.EventListener<WhepEvents, K>;
   }
 
   /** Remove listeners through their original reference, not the internal wrapper. */
@@ -496,7 +507,7 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
     context?: unknown,
     once?: boolean,
   ): this {
-    return super.off(event, this.unwrapListener(listener, context), context, once) as this;
+    return this.removeListener(event, listener, context, once);
   }
 
   override removeListener<K extends keyof WhepEvents>(
@@ -505,12 +516,21 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
     context?: unknown,
     once?: boolean,
   ): this {
-    return super.removeListener(
-      event,
-      this.unwrapListener(listener, context),
-      context,
-      once,
-    ) as this;
+    const byMode = this.guardedListeners
+      .get(listener as object)
+      ?.get(event)
+      ?.get(context);
+    if (!byMode) return super.removeListener(event, listener, context, once) as this;
+    for (const [oneShot, wrapper] of byMode) {
+      if (!once || oneShot)
+        super.removeListener(
+          event,
+          wrapper as EventEmitter.EventListener<WhepEvents, K>,
+          context,
+          once,
+        );
+    }
+    return this;
   }
 
   /** Register a guarded listener; `context` stays optional like the emitter's own API. */
@@ -519,7 +539,7 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
     listener: EventEmitter.EventListener<WhepEvents, K>,
     context?: unknown,
   ): this {
-    return super.on(event, this.guardListener(event, listener, context), context) as this;
+    return super.on(event, this.guardListener(event, listener, context, false), context) as this;
   }
 
   /** `addListener` is an alias of `on`; guard it too so every registered listener is isolated. */
@@ -537,12 +557,15 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
     listener: EventEmitter.EventListener<WhepEvents, K>,
     context?: unknown,
   ): this {
-    return super.once(event, this.guardListener(event, listener, context), context) as this;
+    return super.once(event, this.guardListener(event, listener, context, true), context) as this;
   }
 
-  private notifyError(error: WebRTCError): void {
+  private notifyError(error: WebRTCError, attempt?: NonNullable<WebRTCWhep["attempt"]>): void {
     console.warn("[WhepTS] Player error", {
       playerId: this.playerId,
+      ...(attempt
+        ? { attemptId: attempt.id, elapsedMs: performance.now() - attempt.startedAt }
+        : {}),
       state: this.state,
       type: error.type,
       phase: error.phase,
@@ -555,6 +578,7 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
   private async answerCounterOffer(
     offer: { counterOffer: string; expiresAt: number },
     signal: AbortSignal,
+    progress: { phase: ErrorPhase },
   ): Promise<void> {
     const session = this.session;
     // 反向 offer 只有在 Location 可用时才能提交应答。
@@ -563,16 +587,24 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
         phase: "signaling",
         httpStatus: 406,
       });
-    // 超出有效期的反向 offer 不再应答。
-    if (Date.now() > offer.expiresAt)
-      throw new WebRTCError(ErrorTypes.SIGNAL_ERROR, "Counter-offer expired before answering", {
-        phase: "signaling",
-      });
-    const answer = await this.connectionManager.answerCounterOffer(offer.counterOffer, signal);
+    const assertOfferValid = (): void => {
+      if (Date.now() > offer.expiresAt)
+        throw new WebRTCError(ErrorTypes.SIGNAL_ERROR, "Counter-offer expired before answering", {
+          phase: "signaling",
+        });
+    };
+    assertOfferValid();
+    const answer = await this.connectionManager.answerCounterOffer(
+      offer.counterOffer,
+      signal,
+      this.conf.iceMode === "complete",
+    );
     signal.throwIfAborted();
-    this.answerApplied = true;
+    assertOfferValid();
+    progress.phase = "signaling";
     await this.httpClient.sendAnswer(session, answer, signal);
     signal.throwIfAborted();
+    this.answerApplied = true;
     if (this.session === session) void this.flushCandidates(signal);
   }
 
@@ -712,10 +744,11 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
 
     this.reconnectCount = 0;
     this.conf.url = endpoint;
+    this.trackManager.allowSourceReplacement();
     if (this.state === "getting_codecs") return;
 
-    // Cleanup existing session
-    this.cleanupSession();
+    // 释放旧传输，但让新视频直接替换元素上的旧流。
+    this.cleanupSession({ keepAttached: true });
 
     // Reset to running state and start with new URL
     this.transition("running");

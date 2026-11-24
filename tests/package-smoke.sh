@@ -42,10 +42,11 @@ export function startLegacy(container: HTMLVideoElement) {
   player.updateUrl('https://example.test/backup/whep')
   player.close()
 }
-const onDiagnostic: NonNullable<Conf['onDiagnostic']> = (record: WhepDiagnostic) => {
-  if (record.operation === 'sample-flow') void [record.attemptId, record.elapsedMs]
-}
-export const start = (container: HTMLVideoElement) => new Whep({ url: 'https://example.test/whep', container, onDiagnostic })
+export const start = (container: HTMLVideoElement) =>
+  new Whep({ url: 'https://example.test/whep', container }).on('diagnostic', (record) => {
+    const diagnostic: WhepDiagnostic = record
+    if (diagnostic.operation === 'sample-flow') void [diagnostic.attemptId, diagnostic.elapsedMs]
+  })
 TS
 
 cd "$consumer"

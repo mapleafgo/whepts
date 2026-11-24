@@ -321,6 +321,8 @@ export class SdpUtils {
             ? undefined
             : offer.media[sdpMLineIndex];
       if (!media?.mid) continue;
+      const ufrag = media.iceUfrag ?? offer.iceUfrag;
+      if (candidate.usernameFragment && ufrag && candidate.usernameFragment !== ufrag) continue;
 
       const line = candidate.candidate ? `a=${candidate.candidate}` : "a=end-of-candidates";
       const lines = bySection.get(media);

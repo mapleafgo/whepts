@@ -1,3 +1,5 @@
+import { safeErrorName } from "~/errors";
+
 /**
  * 任务优先级
  */
@@ -36,7 +38,7 @@ const DEFAULT_SCHEDULER_OPTIONS = {
   maxTasksPerTick: 10,
   performanceThreshold: 16,
   enableAdaptiveThrottling: true,
-} satisfies Required<SchedulerOptions>;
+} satisfies Required<Omit<SchedulerOptions, "playerId">>;
 
 /**
  * 监控调度器配置
@@ -44,6 +46,8 @@ const DEFAULT_SCHEDULER_OPTIONS = {
 export interface SchedulerOptions {
   /** 基础调度间隔（毫秒），默认 1000ms */
   baseInterval?: number;
+  /** Owning player, used to correlate debug logs. */
+  playerId?: number;
   /** 单次调度最大执行任务数，默认 10 */
   maxTasksPerTick?: number;
   /** 调度实际间隔超出计划间隔的阈值（毫秒），默认 16ms */
@@ -92,7 +96,7 @@ export class MonitorScheduler {
   private readonly performanceThreshold: number;
   private readonly enableAdaptiveThrottling: boolean;
 
-  constructor(options: SchedulerOptions = {}) {
+  constructor(private readonly options: SchedulerOptions = {}) {
     this.baseInterval = options.baseInterval ?? DEFAULT_SCHEDULER_OPTIONS.baseInterval;
     this.maxTasksPerTick = options.maxTasksPerTick ?? DEFAULT_SCHEDULER_OPTIONS.maxTasksPerTick;
     this.performanceThreshold =
@@ -288,9 +292,10 @@ export class MonitorScheduler {
       task.status = TaskStatus.SCHEDULED;
     } catch (error) {
       // 任务失败已由各监控器自行上报，这里只作调试提示。
-      console.debug("[MonitorScheduler] Task failed", {
+      console.debug("[WhepTS] Monitor task failed", {
+        playerId: this.options.playerId,
         taskId: task.id,
-        error: error instanceof Error ? error.name : "unknown",
+        error: safeErrorName(error),
       });
       // 失败仍推进节奏，避免同一个出错任务按每次 tick 反复重跑。
       task.lastRun = now;

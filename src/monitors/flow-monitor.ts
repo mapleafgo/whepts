@@ -1,5 +1,6 @@
 import type { MonitorScheduler } from "./scheduler";
 import type { MediaNotifier } from "~/types";
+import { safeErrorName } from "~/errors";
 import { TaskPriority } from "./scheduler";
 
 const FLOW_SAMPLE_INTERVAL_MS = 5000;
@@ -233,7 +234,7 @@ export class FlowMonitor {
       });
     } catch (error) {
       videoBytes.clear();
-      return { bytes: videoBytes, errorName: error instanceof Error ? error.name : "unknown" };
+      return { bytes: videoBytes, errorName: safeErrorName(error) };
     }
     return { bytes: videoBytes };
   }

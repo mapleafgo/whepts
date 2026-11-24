@@ -1,6 +1,6 @@
 import type { ParsedOffer } from "../utils/sdp";
 import type { Conf, State } from "~/types";
-import { ErrorTypes, WebRTCError } from "~/errors";
+import { ErrorTypes, safeErrorName, WebRTCError } from "~/errors";
 import { SdpUtils } from "../utils/sdp";
 import { WebRtcUtils } from "../utils/webrtc";
 
@@ -33,6 +33,34 @@ export class HttpClient {
       : undefined;
   }
 
+  private async request(
+    url: string,
+    init: RequestInit & { signal: AbortSignal },
+  ): Promise<Response> {
+    try {
+      return await fetch(url, init);
+    } catch (error) {
+      init.signal.throwIfAborted();
+      throw new WebRTCError(ErrorTypes.REQUEST_ERROR, "WHEP request failed", {
+        phase: "signaling",
+        cause: safeErrorName(error),
+      });
+    }
+  }
+
+  private async readSdp(response: Response, signal: AbortSignal): Promise<string> {
+    try {
+      return await response.text();
+    } catch (error) {
+      signal.throwIfAborted();
+      throw new WebRTCError(ErrorTypes.REQUEST_ERROR, "Unable to read WHEP response", {
+        phase: "signaling",
+        httpStatus: response.status,
+        cause: safeErrorName(error),
+      });
+    }
+  }
+
   private checkStatus(response: Response, accepted: boolean): void {
     if (accepted) return;
 
@@ -52,7 +80,7 @@ export class HttpClient {
 
   /** Send the SDP answer to a server counter-offer. */
   async sendAnswer(session: WhepSession, answer: string, signal: AbortSignal): Promise<void> {
-    const response = await fetch(session.url, {
+    const response = await this.request(session.url, {
       method: "PATCH",
       redirect: "error",
       signal,
@@ -88,7 +116,7 @@ export class HttpClient {
     if (this.options.conf.iceServers && this.options.conf.iceServers.length > 0)
       return this.options.conf.iceServers;
 
-    return fetch(this.options.conf.url, {
+    return this.request(this.options.conf.url, {
       method: "OPTIONS",
       signal,
       headers: {
@@ -113,7 +141,7 @@ export class HttpClient {
       throw new WebRTCError(ErrorTypes.STATE_ERROR, "closed");
 
     const endpoint = this.options.conf.url;
-    return fetch(endpoint, {
+    return this.request(endpoint, {
       method: "POST",
       signal,
       headers: {
@@ -147,7 +175,7 @@ export class HttpClient {
         void res.body?.cancel().catch(() => {});
         signal.throwIfAborted();
       }
-      const body = await res.text();
+      const body = await this.readSdp(res, signal);
       if (!counterCandidate) return { answer: body };
 
       // 草案 §4.3.3：只有带 application/sdp 和合法 SDP offer 的 406 才是反向 offer。
@@ -170,7 +198,7 @@ export class HttpClient {
   }
 
   async deleteSession(session: WhepSession, signal: AbortSignal): Promise<void> {
-    const response = await fetch(session.url, {
+    const response = await this.request(session.url, {
       method: "DELETE",
       signal,
       redirect: "error",
@@ -192,7 +220,7 @@ export class HttpClient {
     const body = SdpUtils.generateSdpFragment(offerData, candidates);
     if (!body) return null;
 
-    const response = await fetch(session.url, {
+    const response = await this.request(session.url, {
       method: "PATCH",
       redirect: "error",
       signal,

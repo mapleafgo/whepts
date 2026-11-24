@@ -5,6 +5,7 @@ import { TaskPriority } from "./scheduler";
 const STARTUP_VERIFICATION_MS = 500;
 const STALL_CHECK_INTERVAL_MS = 5000;
 const RECOVERY_DELAY_MS = 1000;
+const MAX_RECOVERY_ATTEMPTS = 3;
 
 /**
  * PlayMonitor 配置选项
@@ -30,8 +31,10 @@ export class PlayMonitor {
   // 挂载后的第一次采样只建立基线：此时时钟往往刚起步，不足以判断停滞。
   private needsBaseline = false;
   private generation = 0;
+  private playPending = false;
   private activeSource?: HTMLMediaElement["srcObject"];
   private recovering = false;
+  private recoveryAttempts = 0;
   private recoveryTimer?: ReturnType<typeof setTimeout>;
   private verificationTimer?: ReturnType<typeof setTimeout>;
   private unregisterMonitor?: () => void;
@@ -59,9 +62,16 @@ export class PlayMonitor {
    * `freshStream` forces a real play() call because assigning srcObject restarts loading.
    */
   async play({ freshStream = false }: { freshStream?: boolean } = {}): Promise<void> {
+    const stream = this.container.srcObject;
+    // 同源轨道通知不应作废尚未完成的播放或启动校验。
+    if (
+      !freshStream &&
+      this.activeSource === stream &&
+      (this.playPending || (!this.container.paused && this.unregisterMonitor))
+    )
+      return;
     this.stopMonitoring();
     const generation = this.generation;
-    const stream = this.container.srcObject;
     this.activeSource = stream;
     const isCurrent = (): boolean =>
       this.generation === generation && this.container.srcObject === stream;
@@ -71,6 +81,7 @@ export class PlayMonitor {
       return;
     }
 
+    this.playPending = true;
     try {
       await this.container.play();
     } catch (error) {
@@ -82,6 +93,8 @@ export class PlayMonitor {
         muted: this.container.muted,
       });
       return;
+    } finally {
+      if (this.generation === generation) this.playPending = false;
     }
 
     if (!isCurrent()) return;
@@ -139,8 +152,10 @@ export class PlayMonitor {
   /** Stop pending playback recovery without touching the host's element. */
   invalidate(): void {
     this.generation++;
+    this.playPending = false;
     this.activeSource = undefined;
     this.recovering = false;
+    this.recoveryAttempts = 0;
     clearTimeout(this.recoveryTimer);
     this.recoveryTimer = undefined;
     clearTimeout(this.verificationTimer);
@@ -152,8 +167,10 @@ export class PlayMonitor {
    */
   stopMonitoring(): void {
     this.generation++;
+    this.playPending = false;
     this.activeSource = undefined;
     this.recovering = false;
+    this.recoveryAttempts = 0;
     clearTimeout(this.recoveryTimer);
     this.recoveryTimer = undefined;
     clearTimeout(this.verificationTimer);
@@ -190,6 +207,11 @@ export class PlayMonitor {
     }
 
     this.lastCurrentTime = currentTime;
+    if (!this.container.paused && timeAdvanced >= 0.1) {
+      const quality = (this.container as HTMLVideoElement).getVideoPlaybackQuality?.();
+      if (!quality || quality.totalVideoFrames > quality.droppedVideoFrames)
+        this.recoveryAttempts = 0;
+    }
   }
 
   private handleVideoError?: (evt: Event) => void;
@@ -198,37 +220,45 @@ export class PlayMonitor {
     const source = this.activeSource;
     if (!source || source !== this.container.srcObject || this.recovering) return;
 
+    const attempts = this.recoveryAttempts;
     this.stopMonitoring();
     if (this.container.error?.code !== 3) {
       this.reportRecoveryFailure("playback-error", "Media element reported a playback error");
       return;
     }
 
+    if (attempts >= MAX_RECOVERY_ATTEMPTS) {
+      this.reportRecoveryFailure(
+        "element-recovery-exhausted",
+        "Media element recovery attempts were exhausted",
+      );
+      return;
+    }
+    this.recoveryAttempts = attempts;
     this.activeSource = source;
     this.recovering = true;
-    this.scheduleRecovery(source, this.generation, 3);
+    this.scheduleRecovery(source, this.generation);
   }
 
   private scheduleRecovery(
     source: NonNullable<HTMLMediaElement["srcObject"]>,
     generation: number,
-    remaining: number,
   ): void {
     // 让元素有时间释放解码资源，再重新挂载同一连接的流。
     this.recoveryTimer = setTimeout(() => {
       this.recoveryTimer = undefined;
-      void this.recover(source, generation, remaining);
+      void this.recover(source, generation);
     }, RECOVERY_DELAY_MS);
   }
 
   private async recover(
     source: NonNullable<HTMLMediaElement["srcObject"]>,
     generation: number,
-    remaining: number,
   ): Promise<void> {
     const current = (): boolean =>
       generation === this.generation && this.container.srcObject === source;
     if (!current()) return;
+    this.recoveryAttempts++;
 
     try {
       this.container.srcObject = null;
@@ -238,8 +268,8 @@ export class PlayMonitor {
       if (!current()) return;
       if (error instanceof DOMException && error.name === "NotAllowedError") {
         this.reportRecoveryFailure("autoplay-blocked", "Autoplay requires user interaction");
-      } else if (remaining > 1) {
-        this.scheduleRecovery(source, generation, remaining - 1);
+      } else if (this.recoveryAttempts < MAX_RECOVERY_ATTEMPTS) {
+        this.scheduleRecovery(source, generation);
       } else {
         this.reportRecoveryFailure(
           "element-recovery-exhausted",

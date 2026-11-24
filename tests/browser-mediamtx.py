@@ -58,7 +58,8 @@ with sync_playwright() as p:
             return response;
           };
           window.diagnostics = [];
-          window.player = new Whep({url: base + '/live/whep', container: video, lazyLoad: false, onDiagnostic: d => diagnostics.push(d)});
+          window.player = new Whep({url: base + '/live/whep', container: video, lazyLoad: false});
+          window.player.on('diagnostic', d => diagnostics.push(d));
           window.player.on('error', e => console.error(e.phase, e.message, e.httpStatus));
           window.player.on('codecs:detected', c => console.log(JSON.stringify(c)));
         }''',sys.argv[1])

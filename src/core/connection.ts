@@ -110,7 +110,11 @@ export class ConnectionManager {
   }
 
   /** Apply a server counter-offer, adopt the answer scope, and return the answer SDP. */
-  async answerCounterOffer(counterOffer: string, signal: AbortSignal): Promise<string> {
+  async answerCounterOffer(
+    counterOffer: string,
+    signal: AbortSignal,
+    waitForIce: boolean,
+  ): Promise<string> {
     if (this.options.getState() !== "running" || !this.pc)
       throw new WebRTCError(ErrorTypes.STATE_ERROR, "closed");
 
@@ -122,7 +126,10 @@ export class ConnectionManager {
     if (!answer.sdp) throw new WebRTCError(ErrorTypes.SIGNAL_ERROR, "Failed to create answer SDP");
     await pc.setLocalDescription(answer);
     signal.throwIfAborted();
-    const sdp = pc.localDescription?.sdp ?? answer.sdp;
+    if (waitForIce) await this.waitForIceGathering(pc, signal);
+    signal.throwIfAborted();
+    const sdp = pc.localDescription?.sdp ?? (waitForIce ? undefined : answer.sdp);
+    if (!sdp) throw new WebRTCError(ErrorTypes.SIGNAL_ERROR, "Missing gathered answer SDP");
     // 反向 offer 之后，候选片段必须按新的本地 SDP 作用域生成。
     this.offerData = SdpUtils.parseOffer(sdp);
     return sdp;

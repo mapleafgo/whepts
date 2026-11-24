@@ -120,8 +120,17 @@ export class WebRtcUtils {
       }
       if (!fields.get("rel")?.toLowerCase().split(/\s+/).includes("ice-server")) continue;
       declared = true;
-      // 单条坏地址不应拖垮整次发现；浏览器遇到不可用的 ICE 服务器同样只跳过。
-      if (!/^(?:stun|stuns|turn|turns):\S+$/i.test(url)) continue;
+      // 单条非法配置可能使浏览器拒绝整个 ICE 列表。
+      const address =
+        /^(stuns?|turns?):(\[[^\]]+\]|[^\s:/?#@\\[\]]+)(?::([0-9]+))?(\?transport=(?:udp|tcp))?$/i.exec(
+          url,
+        );
+      if (!address) continue;
+      const [, scheme, host, port, transport] = address;
+      const isTurn = /^turns?$/i.test(scheme);
+      if (transport && !isTurn) continue;
+      if (port !== undefined && (Number(port) < 1 || Number(port) > 65535)) continue;
+      if (!URL.canParse("http://" + host)) continue;
       // RFC 8288 §3.2：无法重设锚点的链接必须整条忽略。
       if (fields.has("anchor")) continue;
 
@@ -129,12 +138,9 @@ export class WebRtcUtils {
       const username = fields.get("username");
       const credential = fields.get("credential");
       // Chromium 对缺凭据的 TURN 地址直接抛错，导致整个 PeerConnection 构造失败，这里预过滤。
-      if (/^turns?:/i.test(url) && (username === undefined || credential === undefined)) continue;
-      if (
-        username !== undefined &&
-        credential !== undefined &&
-        (fields.get("credential-type") ?? "password") === "password"
-      ) {
+      const credentialType = fields.get("credential-type") ?? "password";
+      if (isTurn && (!username || !credential || credentialType !== "password")) continue;
+      if (username !== undefined && credential !== undefined && credentialType === "password") {
         server.username = username;
         server.credential = credential;
         server.credentialType = "password";
