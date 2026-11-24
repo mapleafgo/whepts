@@ -55,6 +55,11 @@ test("complete ICE waits for gathering and posts the final SDP without PATCH", a
 
 test("a pending stats request prevents overlapping samples", async (t) => {
   t.mock.timers.enable({ apis: ["setInterval", "setTimeout", "Date"], now: 1000 });
+  Object.defineProperty(globalThis, "RTCSessionDescription", {
+    configurable: true,
+    value: class {},
+  });
+  t.after(() => Reflect.deleteProperty(globalThis, "RTCSessionDescription"));
   let peer;
   let samples = 0;
   const page = Object.assign(new EventTarget(), { hidden: false });
@@ -71,6 +76,7 @@ test("a pending stats request prevents overlapping samples", async (t) => {
     }
 
     async setLocalDescription() {}
+    async setRemoteDescription() {}
     getStats() {
       samples++;
       return getStats();
@@ -81,7 +87,9 @@ test("a pending stats request prevents overlapping samples", async (t) => {
   Object.defineProperty(globalThis, "RTCPeerConnection", { configurable: true, value: Peer });
   t.after(() => Reflect.deleteProperty(globalThis, "RTCPeerConnection"));
   const fetchMock = t.mock.method(globalThis, "fetch", async (_url, { method }) =>
-    method === "POST" ? pending : new Response(null, { status: 204 }),
+    method === "POST"
+      ? new Response("v=0\r\n", { status: 201 })
+      : new Response(null, { status: 204 }),
   );
   const container = { srcObject: null, addEventListener() {}, removeEventListener() {} };
   const diagnostics = [];
@@ -360,6 +368,11 @@ test("audio-first streamless tracks wait for video and attach together", async (
 });
 
 test("scrolling the element out of view must not report a playback stall", async (t) => {
+  Object.defineProperty(globalThis, "RTCSessionDescription", {
+    configurable: true,
+    value: class {},
+  });
+  t.after(() => Reflect.deleteProperty(globalThis, "RTCSessionDescription"));
   let peer;
   class Peer {
     connectionState = "connected";
@@ -370,13 +383,14 @@ test("scrolling the element out of view must not report a playback stall", async
     }
 
     async setLocalDescription() {}
+    async setRemoteDescription() {}
     close() {}
   }
   Object.defineProperty(globalThis, "RTCPeerConnection", { configurable: true, value: Peer });
   t.after(() => Reflect.deleteProperty(globalThis, "RTCPeerConnection"));
   t.mock.method(globalThis, "fetch", (_url, { method }) =>
     method === "POST"
-      ? new Promise(() => {})
+      ? new Response("v=0\r\n", { status: 201 })
       : Promise.resolve(new Response(null, { status: 204 })),
   );
   let report;
@@ -756,6 +770,11 @@ test("pending play rejection after a host stream takeover is ignored", async (t)
 });
 
 test("advancing inbound video bytes without video frames reports playback stall", async (t) => {
+  Object.defineProperty(globalThis, "RTCSessionDescription", {
+    configurable: true,
+    value: class {},
+  });
+  t.after(() => Reflect.deleteProperty(globalThis, "RTCSessionDescription"));
   let peer;
   let receivedBytes = 0;
   class Peer {
@@ -777,13 +796,14 @@ test("advancing inbound video bytes without video frames reports playback stall"
     }
 
     async setLocalDescription() {}
+    async setRemoteDescription() {}
     close() {}
   }
   Object.defineProperty(globalThis, "RTCPeerConnection", { configurable: true, value: Peer });
   t.after(() => Reflect.deleteProperty(globalThis, "RTCPeerConnection"));
   t.mock.method(globalThis, "fetch", (_url, { method }) =>
     method === "POST"
-      ? new Promise(() => {})
+      ? new Response("v=0\r\n", { status: 201 })
       : Promise.resolve(new Response(null, { status: 204 })),
   );
   t.mock.timers.enable({ apis: ["setTimeout", "setInterval", "Date"], now: 1000 });
@@ -3469,6 +3489,11 @@ test("a rejected codec probe still starts playback detection with no extensions"
 
 test("steady flow sampling replaces the startup check instead of scheduling both", async (t) => {
   t.mock.timers.enable({ apis: ["setInterval", "setTimeout", "Date"], now: 1000 });
+  Object.defineProperty(globalThis, "RTCSessionDescription", {
+    configurable: true,
+    value: class {},
+  });
+  t.after(() => Reflect.deleteProperty(globalThis, "RTCSessionDescription"));
   let peer;
   let samples = 0;
   const page = Object.assign(new EventTarget(), { hidden: false });
@@ -3483,6 +3508,7 @@ test("steady flow sampling replaces the startup check instead of scheduling both
     }
 
     async setLocalDescription() {}
+    async setRemoteDescription() {}
     getStats() {
       samples++;
       return Promise.resolve(new Map());
@@ -3493,7 +3519,9 @@ test("steady flow sampling replaces the startup check instead of scheduling both
   Object.defineProperty(globalThis, "RTCPeerConnection", { configurable: true, value: Peer });
   t.after(() => Reflect.deleteProperty(globalThis, "RTCPeerConnection"));
   t.mock.method(globalThis, "fetch", async (_url, { method }) =>
-    method === "POST" ? new Promise(() => {}) : new Response(null, { status: 204 }),
+    method === "POST"
+      ? new Response("v=0\r\n", { status: 201 })
+      : new Response(null, { status: 204 }),
   );
   const player = new WebRTCWhep({
     url: "https://player.example/a",

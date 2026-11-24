@@ -82,7 +82,7 @@ ICE 重启（PATCH 返回 `200` + 新 `ETag`）受支持，后续候选使用新
 | `diagnostic` | `WhepDiagnostic`，用于观测脱敏的运行异常。 |
 | `restart`、`close` | 已安排同源重连、本地关闭完成。 |
 
-监听器语义与 DOM 事件派发一致：同一个事件的通知按注册时的快照依次调用，某个监听器抛错不会中断其余监听器，也不会让播放失败；非诊断监听器的异常通过 `diagnostic` 事件上报，`operation` 为 `listener-error`。监听器内调用 `close()` 或 `updateUrl()` 时，已经开始的派发仍会完成，之后的旧通知被抑制。`on`、`once`、`addListener` 与 `off`、`removeListener` 使用同一份注册表，第三次参数 `context` 决定监听器内的 `this`。
+监听器语义与 DOM 事件派发一致：同一个事件的通知按注册时的快照依次调用，派发不等待监听器返回的 Promise。监听器同步抛错或返回的 Promise 被拒绝，都不会中断其余监听器或让播放失败；非诊断监听器的异常通过 `diagnostic` 事件上报，`operation` 为 `listener-error`。监听器内调用 `close()` 或 `updateUrl()` 时，已经开始的派发仍会完成，之后的旧通知被抑制。`on`、`once`、`addListener` 与 `off`、`removeListener` 使用同一份注册表，第三次参数 `context` 决定监听器内的 `this`。
 
 当前导出的 `ErrorTypes` 包含 `SIGNAL_ERROR`、`STATE_ERROR`、`REQUEST_ERROR`、`NOT_FOUND_ERROR`、`VIDEO_ERROR` 和 `OTHER_ERROR`。HTTP 失败统一使用 `REQUEST_ERROR`，具体状态码由 `httpStatus` 表达；草案 §4.1 要求播放器不把状态码映射到具体原因。`NOT_FOUND_ERROR` 仅为保持导出兼容而保留。
 

@@ -66,6 +66,7 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
   private attempt?: { id: number; controller: AbortController; startedAt: number };
   private connectionDeadline?: ReturnType<typeof setTimeout>;
   private answerApplied = false;
+  private transportConnected = false;
   private candidateDrain?: AbortSignal;
   private queuedCandidates: RTCIceCandidate[] = [];
   private nonAdvertisedCodecs: string[] = [];
@@ -166,7 +167,8 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
       // 给浏览器留出自行恢复短暂网络切换的时间。
       disconnectGraceMs: DISCONNECT_GRACE_MS,
       onConnected: () => {
-        this.clearConnectionDeadline();
+        this.transportConnected = true;
+        this.finishSetupIfReady();
         if (this.state === "running") this.trackManager.waitForVideo(VIDEO_TRACK_WAIT_MS);
       },
       onTransportFailure: (connected) => {
@@ -255,6 +257,7 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
     else peer?.close();
     this.trackManager.stop({ keepAttached });
     this.answerApplied = false;
+    this.transportConnected = false;
     this.candidateDrain = undefined;
     this.queuedCandidates = [];
   }
@@ -366,6 +369,11 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
     void this.connect(attempt, progress);
   }
 
+  private finishSetupIfReady(): void {
+    // 传输可早于反向 answer 的 HTTP 确认建立。
+    if (this.transportConnected && this.answerApplied) this.clearConnectionDeadline();
+  }
+
   private clearConnectionDeadline(): void {
     clearTimeout(this.connectionDeadline);
     this.connectionDeadline = undefined;
@@ -407,7 +415,12 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
     }
   }
 
-  private failSetup(phase: ErrorPhase, error: unknown, reason?: WebRTCError["reason"]): void {
+  private failSetup(
+    progressPhase: ErrorPhase,
+    error: unknown,
+    reason?: WebRTCError["reason"],
+  ): void {
+    const phase = (error instanceof WebRTCError ? error.phase : undefined) ?? progressPhase;
     const attempt = this.attempt;
     this.cleanupSession();
     this.transition("failed");
@@ -479,7 +492,12 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
     const guarded = (...args: Parameters<EventEmitter.EventListener<WhepEvents, K>>): void => {
       try {
         // 与 emitter 一致：未指定 context 时以播放器为 this。
-        Reflect.apply(listener as (...values: unknown[]) => unknown, target, args);
+        const result = Reflect.apply(listener as (...values: unknown[]) => unknown, target, args);
+        if ((typeof result === "object" && result !== null) || typeof result === "function") {
+          void Promise.resolve(result).catch((error: unknown) => {
+            this.reportListenerFailure(String(event), error);
+          });
+        }
       } catch (error) {
         this.reportListenerFailure(String(event), error);
       }
@@ -516,19 +534,19 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
     context?: unknown,
     once?: boolean,
   ): this {
-    const byMode = this.guardedListeners
-      .get(listener as object)
-      ?.get(event)
-      ?.get(context);
-    if (!byMode) return super.removeListener(event, listener, context, once) as this;
-    for (const [oneShot, wrapper] of byMode) {
-      if (!once || oneShot)
-        super.removeListener(
-          event,
-          wrapper as EventEmitter.EventListener<WhepEvents, K>,
-          context,
-          once,
-        );
+    const byContext = this.guardedListeners.get(listener as object)?.get(event);
+    if (!byContext) return super.removeListener(event, listener, context, once) as this;
+    for (const [registeredContext, byMode] of byContext) {
+      if (context && (registeredContext || this) !== context) continue;
+      for (const [oneShot, wrapper] of byMode) {
+        if (!once || oneShot)
+          super.removeListener(
+            event,
+            wrapper as EventEmitter.EventListener<WhepEvents, K>,
+            undefined,
+            once,
+          );
+      }
     }
     return this;
   }
@@ -605,6 +623,7 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
     await this.httpClient.sendAnswer(session, answer, signal);
     signal.throwIfAborted();
     this.answerApplied = true;
+    this.finishSetupIfReady();
     if (this.session === session) void this.flushCandidates(signal);
   }
 
@@ -612,6 +631,7 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
     return this.connectionManager.setAnswer(answer).then(() => {
       signal.throwIfAborted();
       this.answerApplied = true;
+      this.finishSetupIfReady();
       void this.flushCandidates(signal);
     });
   }
