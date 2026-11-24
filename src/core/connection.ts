@@ -144,10 +144,6 @@ export class ConnectionManager {
     return this.offerData;
   }
 
-  close(): void {
-    this.detachPeer()?.close();
-  }
-
   /** Detach the current peer without closing it; the caller owns its disposal. */
   detachPeer(): RTCPeerConnection | undefined {
     const pc = this.pc;

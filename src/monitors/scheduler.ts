@@ -4,10 +4,8 @@ import { safeErrorName } from "~/errors";
  * 任务优先级
  */
 export enum TaskPriority {
-  LOW = 0,
   NORMAL = 1,
   HIGH = 2,
-  CRITICAL = 3,
 }
 
 /**
@@ -16,7 +14,6 @@ export enum TaskPriority {
 enum TaskStatus {
   SCHEDULED = "scheduled",
   RUNNING = "running",
-  PAUSED = "paused",
 }
 
 /**
@@ -30,7 +27,6 @@ interface Task {
   status: TaskStatus;
   callback: () => void | Promise<void>;
   lastRun: number;
-  nextRun: number;
 }
 
 const DEFAULT_SCHEDULER_OPTIONS = {
@@ -64,7 +60,7 @@ export interface RegisterTaskOptions {
   interval: number;
   /** 等待完整间隔再首次执行。 */
   deferFirstRun?: boolean;
-  /** 任务所有者标识（用于批量暂停/恢复） */
+  /** 任务标识；同一 owner 只保留一个任务 */
   owner: string;
   /** 任务优先级，默认 NORMAL */
   priority?: TaskPriority;
@@ -81,12 +77,10 @@ export interface RegisterTaskOptions {
  * - 优先级队列：高优先级任务优先执行
  * - 智能降频：检测性能压力，自动降低全局频率
  * - 防重复注册：相同 owner + interval 自动替换旧任务
- * - 暂停/恢复：支持按 owner 批量暂停任务
  */
 export class MonitorScheduler {
   private timer?: ReturnType<typeof setInterval>;
   private tasks: Map<string, Task> = new Map();
-  private currentTick = 0;
   private lastTickTime = 0;
   private throttleLevel = 0; // 0=正常, 1=2x降频, 2=4x降频
   private isRunning = false;
@@ -131,7 +125,6 @@ export class MonitorScheduler {
       status: TaskStatus.SCHEDULED,
       callback,
       lastRun: options.deferFirstRun ? now : now - interval,
-      nextRun: options.deferFirstRun ? now + interval : now,
     });
 
     // 启动调度器
@@ -144,30 +137,6 @@ export class MonitorScheduler {
         this.stop();
       }
     };
-  }
-
-  /**
-   * 暂停指定 owner 的所有任务
-   */
-  pauseByOwner(owner: string): void {
-    for (const task of this.tasks.values()) {
-      if (task.owner === owner && task.status === TaskStatus.SCHEDULED) {
-        task.status = TaskStatus.PAUSED;
-      }
-    }
-  }
-
-  /**
-   * 恢复指定 owner 的所有任务
-   */
-  resumeByOwner(owner: string): void {
-    const now = Date.now();
-    for (const task of this.tasks.values()) {
-      if (task.owner === owner && task.status === TaskStatus.PAUSED) {
-        task.status = TaskStatus.SCHEDULED;
-        task.nextRun = now + task.interval;
-      }
-    }
   }
 
   /**
@@ -218,8 +187,6 @@ export class MonitorScheduler {
 
     // 执行任务
     this.runTasks(tasksToRun, now);
-
-    this.currentTick++;
   }
 
   /**
@@ -248,7 +215,7 @@ export class MonitorScheduler {
     const throttleMultiplier = 2 ** this.throttleLevel;
 
     for (const task of this.tasks.values()) {
-      // 跳过暂停的任务
+      // 异步任务未结算时不重复调度。
       if (task.status !== TaskStatus.SCHEDULED) continue;
 
       // 计算有效间隔（考虑降频）
@@ -287,9 +254,6 @@ export class MonitorScheduler {
 
     try {
       await task.callback();
-      task.lastRun = now;
-      task.nextRun = now + task.interval;
-      task.status = TaskStatus.SCHEDULED;
     } catch (error) {
       // 任务失败已由各监控器自行上报，这里只作调试提示。
       console.debug("[WhepTS] Monitor task failed", {
@@ -297,9 +261,9 @@ export class MonitorScheduler {
         taskId: task.id,
         error: safeErrorName(error),
       });
+    } finally {
       // 失败仍推进节奏，避免同一个出错任务按每次 tick 反复重跑。
       task.lastRun = now;
-      task.nextRun = now + task.interval;
       task.status = TaskStatus.SCHEDULED;
     }
   }
@@ -310,21 +274,5 @@ export class MonitorScheduler {
   destroy(): void {
     this.stop();
     this.tasks.clear();
-    this.currentTick = 0;
-  }
-
-  /**
-   * 获取调度器状态（用于调试）
-   */
-  getStatus(): {
-    taskCount: number;
-    throttleLevel: number;
-    currentTick: number;
-  } {
-    return {
-      taskCount: this.tasks.size,
-      throttleLevel: this.throttleLevel,
-      currentTick: this.currentTick,
-    };
   }
 }

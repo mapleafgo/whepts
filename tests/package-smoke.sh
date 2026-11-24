@@ -57,14 +57,12 @@ import assert from 'node:assert/strict'
 import Whep, { ErrorTypes, WebRTCError } from 'whepts'
 
 assert.equal(typeof Whep, 'function')
-for (const [key, value] of Object.entries({
+assert.deepEqual(ErrorTypes, {
   SIGNAL_ERROR: 'SignalError',
   STATE_ERROR: 'StateError',
   REQUEST_ERROR: 'RequestError',
-  NOT_FOUND_ERROR: 'NotFoundError',
-  VIDEO_ERROR: 'VideoError',
   OTHER_ERROR: 'OtherError',
-})) assert.equal(ErrorTypes[key], value, key)
+})
 const unavailable = new WebRTCError(ErrorTypes.REQUEST_ERROR, 'Service unavailable', {
   phase: 'signaling',
   httpStatus: 503,

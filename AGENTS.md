@@ -62,7 +62,7 @@ notify("flow:stalled", { reason: "数据流中断" });
 
 失败路径只有两个出口：`failSetup(phase, error, reason?)` 负责清理、转 `failed` 并派发一次 `error`；`notifyError(error)` 只派发既有错误。两者都保证状态与诊断一致，不要另起错误派发路径。
 
-`ErrorTypes` 的值是 `"SignalError"`、`"StateError"`、`"RequestError"`、`"NotFoundError"`、`"VideoError"`、`"OtherError"`。HTTP 失败统一为 `REQUEST_ERROR`，具体状态码放在 `httpStatus`；不要把状态码映射成具体原因。`NOT_FOUND_ERROR` 仅为兼容导出，代码不产生它。
+`ErrorTypes` 的值是 `"SignalError"`、`"StateError"`、`"RequestError"`、`"OtherError"`。HTTP 失败统一为 `REQUEST_ERROR`，具体状态码放在 `httpStatus`；不要把状态码映射成具体原因。
 
 首次连接失败由调用方决定是否重试。POST 返回 `409` 且有可读、有效的 `Retry-After` 时，通过 `WebRTCError.retryAt` 提供 Unix 毫秒时间戳；期限内拒绝同一实例对该端点的重试，不排队。已连通传输断开后按 `2000/4000/8000` 毫秒重试同一来源，预算耗尽转 `failed`。不会自动切备用流。
 
