@@ -131,7 +131,7 @@ export class TrackManager {
   };
 
   private reportVideoUnavailable(reason: string): void {
-    this.notify("play:failed", {
+    this.notify("playback:failed", {
       code: "video-unavailable",
       reason,
       muted: this.container.muted,

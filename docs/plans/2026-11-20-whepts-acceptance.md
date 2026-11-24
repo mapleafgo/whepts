@@ -2,7 +2,7 @@
 
 验收标准见[架构方案](2026-11-20-whepts-architecture-design.md#L113-L125)。本文只记录证据与未验证项，模拟测试不算浏览器或服务端互通。
 
-## 当前基线（`main` @ 1.2.0）
+## 当前基线（`main` @ 1.2.1）
 
 - `npm test`：91 项通过（含生产构建）。
 - `npm run lint`、`node_modules/.bin/tsc --noEmit`：通过。

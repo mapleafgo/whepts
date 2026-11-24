@@ -1,6 +1,6 @@
 # WhepTS 播放器架构改造方案
 
-状态：已实施（`main`，1.2.0），验收进度见[验收记录](2026-11-20-whepts-acceptance.md)。本文保留方案正文与发布门槛，不记录实施过程。
+状态：已实施（`main`，1.2.1），验收进度见[验收记录](2026-11-20-whepts-acceptance.md)。本文保留方案正文与发布门槛，不记录实施过程。
 
 ## 决策与范围
 
@@ -65,20 +65,20 @@ WhepTS 是单源播放器，不是故障切换或播放业务框架。播放器�
 
 | 已提交的动作 | 对外顺序 |
 | --- | --- |
-| 可恢复连接错误，已登记重连 | `state:change` → `error` → `restart` |
-| 不再重试的连接错误 | `state:change` → `error` |
-| 仅观测到流量停滞 | `flow:stalled`；无状态变化，不发 `restart` |
-| 仅观测到播放无进展 | `play:stalled`；无状态变化，不重连 |
-| 自动播放受阻、视频不可用或元素恢复耗尽 | `play:failed`；传输状态不变，由调用方决定下一步 |
-| 当前播放请求的 `play()` 成功 | `play:success`；不代表已收到首帧 |
-| 首次关闭并完成本地清理 | `state:change` → `close` |
+| 可恢复连接错误，已登记重连 | `player:state-changed` → `error` → `player:retry-scheduled` |
+| 不再重试的连接错误 | `player:state-changed` → `error` |
+| 仅观测到流量停滞 | `playback:flow-stalled`；无状态变化，不发 `player:retry-scheduled` |
+| 仅观测到播放无进展 | `playback:stalled`；无状态变化，不重连 |
+| 自动播放受阻、视频不可用或元素恢复耗尽 | `playback:failed`；传输状态不变，由调用方决定下一步 |
+| 当前播放请求的 `play()` 成功 | `playback:started`；不代表已收到首帧 |
+| 首次关闭并完成本地清理 | `player:state-changed` → `player:closed` |
 
-每次发出非终态通知前检查对应的操作是否仍有效，不能用已被释放的尝试引用判断失败通知的有效性。监听器中关闭或切源会抑制尚未发出的旧故障通知；不会抑制已经提交的终态 `close`。仅在状态确实改变时发 `state:change`。
+每次发出非终态通知前检查对应的操作是否仍有效，不能用已被释放的尝试引用判断失败通知的有效性。监听器中关闭或切源会抑制尚未发出的旧故障通知；不会抑制已经提交的终态 `player:closed`。仅在状态确实改变时发 `player:state-changed`。
 
 ## 播放、互通和诊断
 
-- 媒体控制按当前尝试聚合轨道，支持无关联 stream。连通后等待视频有独立的截止时间，不因音频先到立即拒绝；播放中短暂 mute 不立即重连，等视频超时或最后一条可用视频轨道 ended 时报告 `play:failed`，同一不可用期间不重复；收到有效替换轨道可正常挂载，在播放意图允许且 `play()` 成功后才发 `play:success`，不主动换源或为其建立额外恢复流程。仅当应播放且未被自动播放策略阻止时检查首帧和帧进展：仅在已有可用信号时报告无帧进展，不当作断流，不保证识别所有黑屏；局部恢复只对明确的元素故障执行，不重建连接；耗尽后发 play:failed，不再自行尝试播放，等待调用方 resume、切源或关闭。自动播放拒绝只报告 play:failed，等待调用方明确恢复。用户暂停跨切源、重连和可见性变化保持；resume 仍受懒加载可见性策略约束，暂停不关闭传输。
-- 保留 `play:failed` 的英文 `reason` 和 `muted`，新增稳定 `code`：`autoplay-blocked`（浏览器要求用户操作）、`video-unavailable`（无视频或最后一条可用视频结束）、`element-recovery-exhausted`（局部恢复耗尽）、`playback-error`（其他播放失败）。调用方按 code 分支，不解析文案；首帧仍仅用于播放观测，不新增公开事件或状态。
+- 媒体控制按当前尝试聚合轨道，支持无关联 stream。连通后等待视频有独立的截止时间，不因音频先到立即拒绝；播放中短暂 mute 不立即重连，等视频超时或最后一条可用视频轨道 ended 时报告 `playback:failed`，同一不可用期间不重复；收到有效替换轨道可正常挂载，在播放意图允许且 `play()` 成功后才发 `playback:started`，不主动换源或为其建立额外恢复流程。仅当应播放且未被自动播放策略阻止时检查首帧和帧进展：仅在已有可用信号时报告无帧进展，不当作断流，不保证识别所有黑屏；局部恢复只对明确的元素故障执行，不重建连接；耗尽后发 play:failed，不再自行尝试播放，等待调用方 resume、切源或关闭。自动播放拒绝只报告 play:failed，等待调用方明确恢复。用户暂停跨切源、重连和可见性变化保持；resume 仍受懒加载可见性策略约束，暂停不关闭传输。
+- 保留 `playback:failed` 的英文 `reason` 和 `muted`，新增稳定 `code`：`autoplay-blocked`（浏览器要求用户操作）、`video-unavailable`（无视频或最后一条可用视频结束）、`element-recovery-exhausted`（局部恢复耗尽）、`playback-error`（其他播放失败）。调用方按 code 分支，不解析文案；首帧仍仅用于播放观测，不新增公开事件或状态。
 - 一个元素只支持一个活跃播放器，宿主应先关闭旧实例再复用或替换元素。宿主更换已挂载的 srcObject 后，旧媒体控制停止写入，不抢回、不暂停、不静音、不清空新流。旧尝试或已经失去元素归属的 play() 结果不提交任何播放副作用。
 - 流量监控按 inbound video report ID 比较增量；新/重置计数建立基线，失败或缺失不是零流量。统计采样有截止时间；若浏览器调用无法取消且仍未结算，不重叠发起同一采样，降级为连接状态和轨道信号并诊断统计不可用，其他监控继续。页面冻结、休眠或长采样间隔打断观察窗口，恢复时重建基线；不补算停滞。迟到的宽限定时器先检查当前传输，健康则不重连。保留单实例调度，区分任务耗时和采样间隔。
 - WHEP 继续可兼容 MediaMTX 和 ZLMediaKit，但不把两者当成同一能力集。保留既有调用默认；提供可明确选择的全量 ICE 策略，供不支持 PATCH 的部署使用，收集超时作显式建连失败，不无界等待。Trickle 使用实际 MID、处理索引 0 和收集结束，按已验证的服务端策略处理 ETag。缺少可读 Location 时保留 201/SDP 兼容路径，标记会话不可管理、释放候选，不猜 URL、不补发 POST。没有足够互通证据前，不自动切换协议策略，不实现在原会话上 restartIce，也不把所有 406 误判为流不存在或反提议。
@@ -87,14 +87,14 @@ WhepTS 是单源播放器，不是故障切换或播放业务框架。播放器�
 
 ## 公开字段与诊断字段
 
-新增 TypeScript 字段使用 camelCase，新增机器原因码使用小写短横线。`ErrorTypes` 导出 `SIGNAL_ERROR`、`STATE_ERROR`、`REQUEST_ERROR` 和 `OTHER_ERROR`。`track` 与 `candidate` 使用浏览器原生载荷，不另行包装。
+新增 TypeScript 字段使用 camelCase，新增机器原因码使用小写短横线。`ErrorTypes` 导出 `SIGNAL_ERROR`、`STATE_ERROR`、`REQUEST_ERROR` 和 `OTHER_ERROR`。`webrtc:track-received` 与 `webrtc:ice-candidate` 使用浏览器原生载荷，不另行包装。
 
 | 契约 | 字段语义 |
 | --- | --- |
 | `Conf` | 保留已有字段名；`iceMode` 为可选配置，取 `trickle` 或 `complete`，省略时由装配处统一取 `trickle`。非法值作为配置错误，不静默回退。超时、宽限和退避仍为内部策略，不新增同义公开字段。 |
 | `error` | 继续传 `WebRTCError`。`type` 沿用 `ErrorTypes`，`message` 为脱敏英文，仅供阅读。SDK 错误使用 `phase` 标识 `configuration`、`signaling` 或 `connection`；外部自行构造错误不必提供。只有读到实际 HTTP 状态码才提供数字 `httpStatus`；`cause` 可选，只保留脱敏摘要，不传原始异常或响应正文。 |
-| `play:failed` | `code` 是上文定义的稳定原因码，`reason` 是英文说明，`muted` 是结果产生时元素的静音状态。调用方按 `code` 分支，不解析文案；兼容旧版本时允许回退到通用提示。 |
-| 其他公开事件 | `state:change` 保留 `from` 和 `to`；`play:success` 保留 `muted`；停滞事件保留英文 `reason`，不增加重试标记。是否已安排重连以状态及 `restart` 为准。 |
+| `playback:failed` | `code` 是上文定义的稳定原因码，`reason` 是英文说明，`muted` 是结果产生时元素的静音状态。调用方按 `code` 分支，不解析文案；兼容旧版本时允许回退到通用提示。 |
+| 其他公开事件 | `player:state-changed` 保留 `from` 和 `to`；`playback:started` 保留 `muted`；停滞事件保留英文 `reason`，不增加重试标记。是否已安排重连以状态及 `player:retry-scheduled` 为准。 |
 | 可选诊断 | `playerId` 标识实例；`attemptId` 仅用于有归属的连接尝试，不等于远端会话地址；`elapsedMs` 仅在有计时范围时提供，使用单调时钟、毫秒单位。同义字段复用 `phase` 和 `httpStatus`；更细的 `operation` 留在诊断层。 |
 
 可选字段无值时省略，不用空串或 0 冒充。公开错误与诊断使用同一脱敏规则。发布验收覆盖旧构造方式和监听器、字段类型、缺失语义、原因码分支，并核对类型、文档与实际事件一致。

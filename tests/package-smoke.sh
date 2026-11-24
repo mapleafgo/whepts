@@ -31,11 +31,11 @@ import Whep, { type Conf, type State, type WhepDiagnostic, WebRTCError } from 'w
 
 export function startLegacy(container: HTMLVideoElement) {
   const player = new Whep({ url: 'https://example.test/whep', container })
-  player.on('state:change', ({ from, to }) => {
+  player.on('player:state-changed', ({ from, to }) => {
     const states: [State, State] = [from, to]
     void states
   })
-  player.on('candidate', (candidate: RTCIceCandidate) => void candidate)
+  player.on('webrtc:ice-candidate', (candidate: RTCIceCandidate) => void candidate)
   player.on('error', (error: WebRTCError) => void error.message)
   player.pause()
   player.resume()

@@ -56,7 +56,7 @@ def main():
                             window.player = new Whep({
                                 url, iceMode, container: document.querySelector('video'), lazyLoad: false,
                             });
-                            player.on("candidate", candidate => {
+                            player.on("webrtc:ice-candidate", candidate => {
                                 if (candidate.candidate) candidateMids.add(candidate.sdpMid);
                             });
                         }''', {'url': origin + fixture['OFFER'], 'iceMode': mode})

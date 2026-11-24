@@ -40,7 +40,7 @@ with sync_playwright() as p:
           const video = document.querySelector('#video');
           window.events = [];
           window.player = new Whep({url: base, container: video, ...(new URL(base).pathname.startsWith('/index/api/') ? {iceMode: 'complete'} : {})});
-          ['play:success', 'play:failed', 'play:stalled'].forEach(name => player.on(name, payload => events.push([name, Math.round(performance.now()), JSON.stringify(payload).slice(0, 70)])));
+          ['playback:started', 'playback:failed', 'playback:stalled'].forEach(name => player.on(name, payload => events.push([name, Math.round(performance.now()), JSON.stringify(payload).slice(0, 70)])));
           window.mark = label => (window.marks ??= []).push([label, Math.round(performance.now())]);
           player.on('error', e => events.push(['error', e.phase, e.message, e.httpStatus]));
         }""", sys.argv[1])
@@ -70,7 +70,7 @@ with sync_playwright() as p:
         again = page.evaluate("() => ({frames: document.querySelector('#video').getVideoPlaybackQuality().totalVideoFrames, ct: document.querySelector('#video').currentTime, paused: player.paused})")
         print('back in view:', again)
         assert again['paused'] is False
-        stalls = page.evaluate("() => window.events.filter(e => e[0] === 'play:stalled')")
+        stalls = page.evaluate("() => window.events.filter(e => e[0] === 'playback:stalled')")
         assert stalls == [], stalls
     finally:
         browser.close()

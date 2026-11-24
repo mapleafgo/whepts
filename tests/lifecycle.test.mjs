@@ -123,7 +123,7 @@ test("a pending stats request prevents overlapping samples", async (t) => {
   player.updateUrl("https://player.example/b");
   await setImmediate();
   const stalls = [];
-  player.on("flow:stalled", (event) => stalls.push(event));
+  player.on("playback:flow-stalled", (event) => stalls.push(event));
   getStats = async () => new Map();
   peer.onconnectionstatechange();
   peer.ontrack({ streams: [{ getTracks: () => [{ kind: "video" }] }] });
@@ -343,7 +343,7 @@ test("audio-first streamless tracks wait for video and attach together", async (
   }
   const video = videoTrack();
   const failures = [];
-  player.on("play:failed", ({ code }) => failures.push(code));
+  player.on("playback:failed", ({ code }) => failures.push(code));
   peer.ontrack({ streams: [], track: audio });
   peer.connectionState = "connected";
   peer.onconnectionstatechange();
@@ -419,7 +419,7 @@ test("scrolling the element out of view must not report a playback stall", async
   t.after(() => player.close());
   const stalls = [];
   const errors = [];
-  player.on("play:stalled", (event) => stalls.push(event.reason));
+  player.on("playback:stalled", (event) => stalls.push(event.reason));
   player.on("error", (error) => errors.push([error.phase, error.message]));
   await setImmediate();
   const stream = { getTracks: () => [{ kind: "video" }] };
@@ -474,7 +474,7 @@ test("the first stall sample after attaching only establishes a baseline", async
   const player = new WebRTCWhep({ url: "https://player.example/a", container, lazyLoad: false });
   t.after(() => player.close());
   const stalls = [];
-  player.on("play:stalled", (event) => stalls.push(event.reason));
+  player.on("playback:stalled", (event) => stalls.push(event.reason));
   await setImmediate();
   peer.ontrack({ streams: [{ getTracks: () => [{ kind: "video" }] }] });
   await setImmediate();
@@ -576,8 +576,8 @@ test("autoplay denial reports a reason code without muting or retrying", async (
   const player = new WebRTCWhep({ url: "https://player.example/a", container, lazyLoad: false });
   t.after(() => player.close());
   const failures = [];
-  player.on("play:failed", (failure) => failures.push(failure));
-  player.on("play:failed", () => {
+  player.on("playback:failed", (failure) => failures.push(failure));
+  player.on("playback:failed", () => {
     throw new Error("Observer failed");
   });
   await setImmediate();
@@ -657,9 +657,9 @@ async function setupMediaProbe(t, { lazyLoad = false, pendingPlay = false } = {}
   const player = new WebRTCWhep({ url: "https://fixture.invalid/a", container, lazyLoad });
   t.after(() => player.close());
   const events = { success: 0, stalled: [], failed: [] };
-  player.on("play:success", () => events.success++);
-  player.on("play:stalled", (x) => events.stalled.push(x.reason));
-  player.on("play:failed", (x) => events.failed.push(x.code));
+  player.on("playback:started", () => events.success++);
+  player.on("playback:stalled", (x) => events.stalled.push(x.reason));
+  player.on("playback:failed", (x) => events.failed.push(x.code));
   await setImmediate();
   assert.equal(player.state, "running");
   assert.equal(typeof peer?.ontrack, "function");
@@ -756,7 +756,7 @@ test("pending play rejection after a host stream takeover is ignored", async (t)
   const player = new WebRTCWhep({ url: "https://player.example/a", container, lazyLoad: false });
   t.after(() => player.close());
   const failures = [];
-  player.on("play:failed", (failure) => failures.push(failure));
+  player.on("playback:failed", (failure) => failures.push(failure));
   await setImmediate();
   peer.ontrack({ streams: [{ getTracks: () => [{ kind: "video" }] }] });
   const takeover = {};
@@ -820,8 +820,8 @@ test("advancing inbound video bytes without video frames reports playback stall"
   t.after(() => player.close());
   const stalls = [];
   const flowStalls = [];
-  player.on("flow:stalled", (event) => flowStalls.push(event));
-  player.on("play:stalled", (event) => stalls.push(event.reason));
+  player.on("playback:flow-stalled", (event) => flowStalls.push(event));
+  player.on("playback:stalled", (event) => stalls.push(event.reason));
   await setImmediate();
   peer.ontrack({ streams: [{ getTracks: () => [{ kind: "video" }] }] });
   await setImmediate();
@@ -890,7 +890,7 @@ test("element recovery exhaustion reports playback failure without closing trans
   t.after(() => player.close());
   await setImmediate();
   const failures = [];
-  player.on("play:failed", ({ code }) => failures.push(code));
+  player.on("playback:failed", ({ code }) => failures.push(code));
   peer.ontrack({ streams: [{ getTracks: () => [{ kind: "video" }] }] });
   await setImmediate();
   container.error = { code: 3, message: "Internal media detail" };
@@ -953,7 +953,7 @@ test("host stream takeover cancels pending media recovery writes", async (t) => 
   t.after(() => player.close());
   await setImmediate();
   const failures = [];
-  player.on("play:failed", ({ code }) => failures.push(code));
+  player.on("playback:failed", ({ code }) => failures.push(code));
   peer.ontrack({ streams: [{ getTracks: () => [{ kind: "video" }] }] });
   await setImmediate();
   container.error = { code: 3, message: "Internal media detail" };
@@ -1036,7 +1036,7 @@ test("close deletes a known session before its answer body settles", async (t) =
       await setImmediate();
       assert.ok(requests.some(([method]) => method === "POST"));
       const observations = [];
-      player.on("state:change", ({ to }) => {
+      player.on("player:state-changed", ({ to }) => {
         if (to === "closed") observations.push(requests.some(([method]) => method === "DELETE"));
       });
       player.close();
@@ -1930,7 +1930,7 @@ test("late PATCH completion cannot affect a replacement session", async (t) => {
       await setImmediate();
       fragments.length = 0;
       tags.length = 0;
-      player.removeAllListeners("candidate");
+      player.removeAllListeners("webrtc:ice-candidate");
       const oldCandidate = peer.onicecandidate;
       const oldTrack = peer.ontrack;
       oldCandidate({
@@ -1967,17 +1967,17 @@ test("late PATCH completion cannot affect a replacement session", async (t) => {
       assert.equal(fragments.length, 2);
       assert.equal(player.state, "running");
       const candidates = [];
-      player.on("candidate", (candidate) => candidates.push(candidate));
+      player.on("webrtc:ice-candidate", (candidate) => candidates.push(candidate));
       oldCandidate({ candidate: { sdpMLineIndex: 0, candidate: "candidate:stale" } });
       assert.deepEqual(candidates, []);
       const tracks = [];
-      player.on("track", (event) => tracks.push(event));
+      player.on("webrtc:track-received", (event) => tracks.push(event));
       const staleStream = { getTracks: () => [{ kind: "video" }] };
       oldTrack({ streams: [staleStream] });
       assert.deepEqual(tracks, []);
       const errors = [];
       player.on("error", (error) => errors.push([player.state, error.phase, error.httpStatus]));
-      player.on("candidate", () => {
+      player.on("webrtc:ice-candidate", () => {
         throw new Error("Observer failed");
       });
       // 候选 PATCH 失败只丢该批并记诊断，会话保持 running。
@@ -2317,9 +2317,9 @@ test("brief disconnection is ignored but persistent disconnection schedules reco
     peer.onconnectionstatechange();
   };
   const notifications = [];
-  player.on("state:change", ({ to }) => notifications.push(to));
+  player.on("player:state-changed", ({ to }) => notifications.push(to));
   player.on("error", ({ phase }) => notifications.push(phase));
-  player.on("restart", () => notifications.push("restart"));
+  player.on("player:retry-scheduled", () => notifications.push("player:retry-scheduled"));
   change("connected");
   change("disconnected");
   change("connected");
@@ -2329,7 +2329,7 @@ test("brief disconnection is ignored but persistent disconnection schedules reco
   assert.equal(player.state, "running");
   t.mock.timers.tick(5000);
   assert.equal(player.state, "restarting");
-  assert.deepEqual(notifications, ["restarting", "connection", "restart"]);
+  assert.deepEqual(notifications, ["restarting", "connection", "player:retry-scheduled"]);
   for (const delay of [2000, 4000, 8000]) {
     t.mock.timers.tick(delay);
     await setImmediate();
@@ -2337,7 +2337,7 @@ test("brief disconnection is ignored but persistent disconnection schedules reco
     change("failed");
   }
   assert.equal(player.state, "failed");
-  assert.equal(notifications.filter((event) => event === "restart").length, 3);
+  assert.equal(notifications.filter((event) => event === "player:retry-scheduled").length, 3);
 });
 
 test("confirmed video flow restores the first reconnect delay", async (t) => {
@@ -2486,14 +2486,14 @@ test("closing inside the restarting notification cancels recovery before later e
     peer.onconnectionstatechange();
   };
   const events = [];
-  player.on("state:change", ({ to }) => {
+  player.on("player:state-changed", ({ to }) => {
     events.push(to);
     if (to === "restarting") player.close();
   });
-  player.on("state:change", ({ to }) => events.push(`second:${to}:${player.state}`));
+  player.on("player:state-changed", ({ to }) => events.push(`second:${to}:${player.state}`));
   player.on("error", () => events.push("error"));
-  player.on("restart", () => events.push("restart"));
-  player.on("close", () => events.push("close"));
+  player.on("player:retry-scheduled", () => events.push("player:retry-scheduled"));
+  player.on("player:closed", () => events.push("player:closed"));
   const requests = fetch.mock.callCount();
   change("connected");
   change("failed");
@@ -2505,7 +2505,7 @@ test("closing inside the restarting notification cancels recovery before later e
     "restarting",
     "closed",
     "second:closed:closed",
-    "close",
+    "player:closed",
     "second:restarting:closed",
   ]);
 });
@@ -2647,7 +2647,7 @@ test("hung codec probes close before starting signaling without extensions", asy
   });
   t.after(() => player.close());
   const results = [];
-  player.on("codecs:detected", (result) => results.push(result));
+  player.on("webrtc:codecs-detected", (result) => results.push(result));
   assert.ok(open.size > 0);
   t.mock.timers.tick(3000);
   await setImmediate();
@@ -2693,10 +2693,10 @@ test("a throwing listener cannot stop later listeners of the same event", async 
   player.on("diagnostic", (record) => diagnostics.push(record));
   t.after(() => player.close());
   const seen = [];
-  player.on("state:change", () => {
+  player.on("player:state-changed", () => {
     throw new Error("Private listener detail");
   });
-  player.on("state:change", ({ to }) => seen.push(to));
+  player.on("player:state-changed", ({ to }) => seen.push(to));
   await setImmediate();
   t.mock.timers.enable({ apis: ["setTimeout"] });
   player.updateUrl("https://player.example/b");
@@ -2727,10 +2727,10 @@ test("listener diagnostics only expose recognized error names", (t) => {
     }),
     new TypeError("Private fixture detail"),
   ]) {
-    player.once("restart", () => {
+    player.once("player:retry-scheduled", () => {
       throw error;
     });
-    assert.doesNotThrow(() => player.emit("restart"));
+    assert.doesNotThrow(() => player.emit("player:retry-scheduled"));
   }
   assert.deepEqual(causes, ["unknown", "unknown", "TypeError"]);
 });
@@ -2753,11 +2753,11 @@ test("diagnostic listener failures do not inspect the thrown object or interrupt
     });
   });
   player.on("diagnostic", (record) => seen.push(record.operation));
-  player.on("restart", () => {
+  player.on("player:retry-scheduled", () => {
     throw new Error("Fixture failure");
   });
 
-  assert.doesNotThrow(() => player.emit("restart"));
+  assert.doesNotThrow(() => player.emit("player:retry-scheduled"));
   assert.equal(nameReads, 0);
   assert.deepEqual(seen, ["listener-error"]);
 });
@@ -2773,13 +2773,13 @@ test("re-registering the same listener keeps a single registration", async (t) =
   const listener = () => {
     calls++;
   };
-  player.on("state:change", listener);
-  player.on("state:change", listener);
-  assert.equal(player.listeners("state:change").length, 1);
+  player.on("player:state-changed", listener);
+  player.on("player:state-changed", listener);
+  assert.equal(player.listeners("player:state-changed").length, 1);
   await setImmediate();
   const before = calls;
-  player.off("state:change", listener);
-  assert.equal(player.listeners("state:change").length, 0);
+  player.off("player:state-changed", listener);
+  assert.equal(player.listeners("player:state-changed").length, 0);
   player.updateUrl("https://player.example/b");
   await setImmediate();
   assert.equal(calls, before, "removed listener must not run");
@@ -2794,19 +2794,19 @@ test("persistent and once registrations of the same listener coexist", (t) => {
   t.after(() => player.close());
   let calls = 0;
   const listener = () => calls++;
-  player.on("restart", listener);
-  player.once("restart", listener);
-  player.emit("restart");
-  player.emit("restart");
+  player.on("player:retry-scheduled", listener);
+  player.once("player:retry-scheduled", listener);
+  player.emit("player:retry-scheduled");
+  player.emit("player:retry-scheduled");
   assert.equal(calls, 3);
 
-  player.once("restart", listener);
-  player.off("restart", listener, undefined, true);
-  player.emit("restart");
+  player.once("player:retry-scheduled", listener);
+  player.off("player:retry-scheduled", listener, undefined, true);
+  player.emit("player:retry-scheduled");
   assert.equal(calls, 4);
-  player.once("restart", listener);
-  player.off("restart", listener);
-  player.emit("restart");
+  player.once("player:retry-scheduled", listener);
+  player.off("player:retry-scheduled", listener);
+  player.emit("player:retry-scheduled");
   assert.equal(calls, 4);
 });
 
@@ -2819,10 +2819,10 @@ test("removing the same callback from one event leaves the other event subscribe
   t.after(() => player.close());
   let calls = 0;
   const listener = () => calls++;
-  player.on("restart", listener);
-  player.on("close", listener);
-  player.off("restart", listener);
-  player.emit("restart");
+  player.on("player:retry-scheduled", listener);
+  player.on("player:closed", listener);
+  player.off("player:retry-scheduled", listener);
+  player.emit("player:retry-scheduled");
   assert.equal(calls, 0);
   player.close();
   assert.equal(calls, 1);
@@ -2840,11 +2840,11 @@ test("removing a listener keeps other registrations of the same function", async
   const listener = function () {
     this.calls++;
   };
-  player.on("state:change", listener, first);
-  player.on("state:change", listener, second);
+  player.on("player:state-changed", listener, first);
+  player.on("player:state-changed", listener, second);
   await setImmediate();
   assert.ok(first.calls > 0 && second.calls > 0, JSON.stringify([first.calls, second.calls]));
-  player.off("state:change", listener, first);
+  player.off("player:state-changed", listener, first);
   const firstBefore = first.calls;
   const secondBefore = second.calls;
   player.updateUrl("https://player.example/b");
@@ -2863,14 +2863,14 @@ test("closing inside a throwing listener leaves the player consistent", async (t
   player.on("diagnostic", (record) => diagnostics.push(record));
   t.after(() => player.close());
   const seen = [];
-  player.on("state:change", ({ to }) => {
+  player.on("player:state-changed", ({ to }) => {
     seen.push(to);
     if (to === "running") {
       player.close();
       throw new Error("Private listener detail");
     }
   });
-  player.on("state:change", ({ to }) => seen.push(`after:${to}`));
+  player.on("player:state-changed", ({ to }) => seen.push(`after:${to}`));
   await setImmediate();
   assert.equal(player.state, "closed");
   // 派发按快照继续：关闭产生的 closed 通知先派发完，再回到已开始的 running 派发。
@@ -2887,7 +2887,7 @@ test("listener context is preserved when a binding is provided", async (t) => {
   t.after(() => player.close());
   const context = { changes: 0, self: null };
   player.on(
-    "state:change",
+    "player:state-changed",
     function () {
       this.changes++;
       this.self = this;
@@ -2910,11 +2910,11 @@ test("removing a listener stops it from being called", async (t) => {
   const listener = () => {
     calls++;
   };
-  player.on("state:change", listener);
+  player.on("player:state-changed", listener);
   await setImmediate();
   const before = calls;
   assert.ok(before > 0, String(before));
-  player.off("state:change", listener);
+  player.off("player:state-changed", listener);
   player.updateUrl("https://player.example/b");
   await setImmediate();
   assert.equal(calls, before, "removed listener must not run again");
@@ -2930,11 +2930,11 @@ test("listeners registered through addListener are isolated too", async (t) => {
   player.on("diagnostic", (record) => diagnostics.push(record));
   t.after(() => player.close());
   const seen = [];
-  player.addListener("state:change", () => {
+  player.addListener("player:state-changed", () => {
     seen.push("first");
     throw new Error("Private listener detail");
   });
-  player.addListener("state:change", ({ to }) => seen.push(to));
+  player.addListener("player:state-changed", ({ to }) => seen.push(to));
   await setImmediate();
   assert.ok(seen.includes("first"), JSON.stringify(seen));
   assert.ok(seen.includes("running"), JSON.stringify(seen));
@@ -2954,11 +2954,11 @@ test("a throwing once listener is isolated like a persistent one", async (t) => 
   player.on("diagnostic", (record) => diagnostics.push(record));
   t.after(() => player.close());
   const seen = [];
-  player.on("state:change", () => {
+  player.on("player:state-changed", () => {
     seen.push("once");
     throw new Error("Private listener detail");
   });
-  player.on("state:change", ({ to }) => seen.push(to));
+  player.on("player:state-changed", ({ to }) => seen.push(to));
   await setImmediate();
   assert.ok(seen.includes("running"), JSON.stringify(seen));
   assert.ok(seen.includes("once"), JSON.stringify(seen));
@@ -3370,8 +3370,8 @@ test("public notifications do not control the active session", async (t) => {
   t.after(() => player.close());
   await setImmediate();
   let restarts = 0;
-  player.on("restart", () => restarts++);
-  player.emit("flow:stalled", { reason: "No inbound video progress" });
+  player.on("player:retry-scheduled", () => restarts++);
+  player.emit("playback:flow-stalled", { reason: "No inbound video progress" });
   player.emit("error", new WebRTCError(ErrorTypes.OTHER_ERROR, "External notification"));
   assert.equal(player.state, "running");
   assert.equal(restarts, 0);
@@ -3441,7 +3441,7 @@ test("stats rejection reports a request-failed diagnostic instead of a stall", a
   peer.onconnectionstatechange();
   peer.ontrack({ streams: [{ getTracks: () => [{ kind: "video" }] }] });
   const stalls = [];
-  player.on("flow:stalled", (event) => stalls.push(event));
+  player.on("playback:flow-stalled", (event) => stalls.push(event));
   failing = true;
   for (let i = 0; i < 12; i++) {
     t.mock.timers.tick(1000);
@@ -3481,7 +3481,7 @@ test("a rejected codec probe still starts playback detection with no extensions"
   });
   t.after(() => player.close());
   const results = [];
-  player.on("codecs:detected", (result) => results.push(result));
+  player.on("webrtc:codecs-detected", (result) => results.push(result));
   await setImmediate();
   assert.deepEqual(results, [[]]);
   assert.equal(fetch.mock.callCount(), 1);
@@ -3584,7 +3584,7 @@ test("transport failure cancels pending media recovery", async (t) => {
   t.after(() => player.close());
   await setImmediate();
   const successes = [];
-  player.on("play:success", () => successes.push(plays));
+  player.on("playback:started", () => successes.push(plays));
   peer.onconnectionstatechange();
   peer.ontrack({ streams: [{ getTracks: () => [{ kind: "video" }] }] });
   await setImmediate();

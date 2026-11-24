@@ -255,13 +255,13 @@ class CounterOfferBrowserTest(unittest.TestCase):
                 throw new Error('Private diagnostic listener detail');
             });
             player.on('diagnostic', ({operation, cause}) => diagnostics.push([operation, cause]));
-            player.once('close', async () => {
+            player.once('player:closed', async () => {
                 order.push('async-start');
                 await pending;
                 order.push('async-end');
                 throw new TypeError('Private close listener detail');
             });
-            player.on('close', () => order.push('next'));
+            player.on('player:closed', () => order.push('next'));
             player.close();
             order.push(player.state);
             finish();
@@ -279,9 +279,9 @@ class CounterOfferBrowserTest(unittest.TestCase):
         observed = self.page.evaluate('''() => {
             let calls = 0;
             const callback = () => calls++;
-            player.on('close', callback);
-            player.once('close', callback, {});
-            player.off('close', callback);
+            player.on('player:closed', callback);
+            player.once('player:closed', callback, {});
+            player.off('player:closed', callback);
             player.close();
             return {state: player.state, calls};
         }''')

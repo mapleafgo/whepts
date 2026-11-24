@@ -255,7 +255,7 @@ export class FlowMonitor {
    * 触发断流停滞事件
    */
   private triggerStreamError(): void {
-    this.options.notify("flow:stalled", {
+    this.options.notify("playback:flow-stalled", {
       reason: "Stream interrupted: video flow stalled",
     });
   }

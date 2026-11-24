@@ -50,10 +50,10 @@ src/monitors/flow-monitor.ts 入站字节采样与断流检测
 ```typescript
 // ✅ 事件负载用英文，注释用中文
 // 断流停滞
-notify("flow:stalled", { reason: "Stream interrupted: video flow stalled" });
+notify("playback:flow-stalled", { reason: "Stream interrupted: video flow stalled" });
 
 // ❌ 事件负载用中文
-notify("flow:stalled", { reason: "数据流中断" });
+notify("playback:flow-stalled", { reason: "数据流中断" });
 ```
 
 ## 状态与失败
@@ -80,7 +80,7 @@ notify("flow:stalled", { reason: "数据流中断" });
 - 赋值 `srcObject` 会按 HTML 规范重置加载状态，挂载新流后必须显式调用一次 `play()`，不能靠 `paused` 判断跳过。
 - 切源时不先把元素置 `null` 再赋值，避免多跑一次加载。
 - `lazyLoad` 默认开启，`IntersectionObserver` 阈值 `0.5`；隐藏时保持传输但解绑元素。
-- 没有视频轨道时派发 `play:failed`，码值 `video-unavailable`，不进入 `failed` 状态。
+- 没有视频轨道时派发 `playback:failed`，码值 `video-unavailable`，不进入 `failed` 状态。
 - 元素崩溃恢复最多 3 次，间隔 1 秒；耗尽派发 `element-recovery-exhausted`。
 
 ## 监控
@@ -118,7 +118,7 @@ SDP 使用 unified-plan 语义；负载类型在 30–127 之间预留，跳过 
 
 公开方法与访问器：构造 `constructor(conf)`、`get state`、`get paused`、`pause()`、`resume()`、`updateUrl(url)`、`close()`。事件监听沿用 `EventEmitter`：`on`、`once`、`addListener` 注册的监听器统一包装，单个监听器抛错不中断其余监听器，也不影响播放，非诊断监听器的异常通过 `listener-error` 上报，诊断监听器的异常只记调试日志；`off` 与 `removeListener` 按原引用移除。
 
-事件：`codecs:detected`、`state:change`、`candidate`、`track`、`play:success`、`play:failed`（`autoplay-blocked`、`video-unavailable`、`element-recovery-exhausted`、`playback-error`）、`play:stalled`、`flow:stalled`、`error`、`diagnostic`、`close`、`restart`。
+事件：`webrtc:codecs-detected`、`player:state-changed`、`webrtc:ice-candidate`、`webrtc:track-received`、`playback:started`、`playback:failed`（`autoplay-blocked`、`video-unavailable`、`element-recovery-exhausted`、`playback-error`）、`playback:stalled`、`playback:flow-stalled`、`error`、`diagnostic`、`player:closed`、`player:retry-scheduled`。
 
 ## 提交前
 

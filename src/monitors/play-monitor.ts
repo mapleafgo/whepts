@@ -87,7 +87,7 @@ export class PlayMonitor {
     } catch (error) {
       if (!isCurrent()) return;
       const blocked = error instanceof DOMException && error.name === "NotAllowedError";
-      this.options.notify("play:failed", {
+      this.options.notify("playback:failed", {
         code: blocked ? "autoplay-blocked" : "playback-error",
         reason: blocked ? "Autoplay requires user interaction" : "Unable to start playback",
         muted: this.container.muted,
@@ -102,7 +102,7 @@ export class PlayMonitor {
     this.verificationTimer = setTimeout(() => {
       if (isCurrent()) this.verifyPlayback();
     }, STARTUP_VERIFICATION_MS);
-    this.options.notify("play:success", { muted: this.container.muted });
+    this.options.notify("playback:started", { muted: this.container.muted });
   }
 
   /**
@@ -111,7 +111,7 @@ export class PlayMonitor {
   private verifyPlayback(): void {
     // 检查视频是否真正在播放
     if (this.container.paused) {
-      this.options.notify("play:stalled", {
+      this.options.notify("playback:stalled", {
         reason: "Playback verification failed: media is paused",
       });
       return;
@@ -120,13 +120,13 @@ export class PlayMonitor {
     // 媒体时钟可能由音频推进，不能据此判断视频已出帧。
     const quality = (this.container as HTMLVideoElement).getVideoPlaybackQuality?.();
     if (quality && quality.totalVideoFrames === quality.droppedVideoFrames) {
-      this.options.notify("play:stalled", { reason: "No video frames presented" });
+      this.options.notify("playback:stalled", { reason: "No video frames presented" });
       return;
     }
 
     // 检查 currentTime 是否在前进
     if (this.container.currentTime === 0) {
-      this.options.notify("play:stalled", {
+      this.options.notify("playback:stalled", {
         reason: "Playback verification failed: currentTime is not advancing",
       });
     }
@@ -192,7 +192,7 @@ export class PlayMonitor {
 
     // 如果 5 秒内时间前进少于 0.1 秒，认为已停滞
     if (timeAdvanced < 0.1 && !this.container.paused) {
-      this.options.notify("play:stalled", {
+      this.options.notify("playback:stalled", {
         reason: `Playback stalled: currentTime not advancing (advanced ${timeAdvanced.toFixed(2)}s in 5s)`,
       });
       return;
@@ -273,7 +273,7 @@ export class PlayMonitor {
     if (current()) {
       this.recovering = false;
       this.startMonitoring();
-      this.options.notify("play:success", { muted: this.container.muted });
+      this.options.notify("playback:started", { muted: this.container.muted });
     }
   }
 
@@ -282,7 +282,7 @@ export class PlayMonitor {
     reason: string,
   ): void {
     this.stopMonitoring();
-    this.options.notify("play:failed", { code, reason, muted: this.container.muted });
+    this.options.notify("playback:failed", { code, reason, muted: this.container.muted });
   }
 
   /**

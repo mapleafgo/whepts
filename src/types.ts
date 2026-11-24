@@ -43,12 +43,12 @@ export interface WhepDiagnostic {
  * Event types emitted by WebRTCWhep
  */
 export interface WhepEvents {
-  "codecs:detected": (codecs: string[]) => void;
-  "state:change": (payload: { from: State; to: State }) => void;
-  candidate: (candidate: RTCIceCandidate) => void;
-  track: (evt: RTCTrackEvent) => void;
-  "play:success": (payload: { muted: boolean }) => void;
-  "play:failed": (payload: {
+  "webrtc:codecs-detected": (codecs: string[]) => void;
+  "player:state-changed": (payload: { from: State; to: State }) => void;
+  "webrtc:ice-candidate": (candidate: RTCIceCandidate) => void;
+  "webrtc:track-received": (evt: RTCTrackEvent) => void;
+  "playback:started": (payload: { muted: boolean }) => void;
+  "playback:failed": (payload: {
     code:
       | "autoplay-blocked"
       | "video-unavailable"
@@ -57,13 +57,13 @@ export interface WhepEvents {
     reason: string;
     muted: boolean;
   }) => void;
-  "play:stalled": (payload: { reason: string }) => void;
-  "flow:stalled": (payload: { reason: string }) => void;
+  "playback:stalled": (payload: { reason: string }) => void;
+  "playback:flow-stalled": (payload: { reason: string }) => void;
   error: (err: WebRTCError) => void;
   /** Observe sanitized operational failures, including remote cleanup after close. */
   diagnostic: (diagnostic: WhepDiagnostic) => void;
-  close: () => void;
-  restart: () => void;
+  "player:closed": () => void;
+  "player:retry-scheduled": () => void;
 }
 
 /**
@@ -82,7 +82,11 @@ declare global {
   }
 }
 
-type MediaEvent = "play:failed" | "play:success" | "play:stalled" | "flow:stalled";
+type MediaEvent =
+  | "playback:failed"
+  | "playback:started"
+  | "playback:stalled"
+  | "playback:flow-stalled";
 
 export type MediaNotifier = <K extends MediaEvent>(
   event: K,

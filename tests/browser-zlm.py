@@ -140,7 +140,7 @@ with sync_playwright() as p:
           };
           window.player = new Whep({url: base + '/index/api/whep?app=live&stream=camera', container: video, lazyLoad: false, iceMode: 'complete'});
           window.player.on('error', e => console.error(e.phase, e.message, e.httpStatus));
-          window.player.on('codecs:detected', c => console.log(JSON.stringify(c)));
+          window.player.on('webrtc:codecs-detected', c => console.log(JSON.stringify(c)));
         }''',[BASE, HOLD])
         page.wait_for_function("document.querySelector('video')?.getVideoPlaybackQuality().totalVideoFrames >= 3",timeout=18000)
         print('frames',page.locator('video').evaluate('(v) => v.getVideoPlaybackQuality().totalVideoFrames'))

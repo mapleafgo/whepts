@@ -157,11 +157,12 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
       getState: () => this.stateStore.get(),
       onCandidate: (candidate) => {
         this.handleCandidate(candidate);
-        this.notify("candidate", candidate);
+        this.notify("webrtc:ice-candidate", candidate);
       },
       onTrack: (event, pc) => {
         this.trackManager.onTrack(event, pc);
-        if (this.connectionManager.getPeerConnection() === pc) this.notify("track", event);
+        if (this.connectionManager.getPeerConnection() === pc)
+          this.notify("webrtc:track-received", event);
       },
       getNonAdvertisedCodecs: () => this.nonAdvertisedCodecs,
       // 给浏览器留出自行恢复短暂网络切换的时间。
@@ -217,7 +218,7 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
         this.scheduler.destroy();
       } finally {
         this.notifyStateChange(from, "closed");
-        this.notify("close");
+        this.notify("player:closed");
       }
     }
   }
@@ -237,7 +238,7 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
       from,
       to,
     });
-    this.notify("state:change", { from, to });
+    this.notify("player:state-changed", { from, to });
   }
 
   private cleanupSession({ keepAttached = false } = {}): void {
@@ -341,14 +342,14 @@ export default class WebRTCWhep extends EventEmitter<WhepEvents> {
       new WebRTCError(ErrorTypes.SIGNAL_ERROR, "Peer connection was lost", { phase: "connection" }),
       attempt,
     );
-    if (this.restartTimeout === timer) this.notify("restart");
+    if (this.restartTimeout === timer) this.notify("player:retry-scheduled");
   }
 
   private handleCodecsDetected(codecs: string[]): void {
     if (this.state !== "getting_codecs") return;
 
     this.nonAdvertisedCodecs = codecs;
-    this.notify("codecs:detected", codecs);
+    this.notify("webrtc:codecs-detected", codecs);
     this.transition("running");
     this.start();
   }
